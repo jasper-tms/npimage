@@ -5,6 +5,10 @@ import glob
 
 import numpy as np
 
+supported_extensions = [
+    'tif', 'tiff', 'jpg', 'jpeg', 'png',
+    'nrrd', 'zarr', 'raw', 'vol'
+]
 
 def load(filename, dim_order='zyx', **kwargs):
     """
@@ -16,7 +20,7 @@ def load(filename, dim_order='zyx', **kwargs):
     if filename[-1] == '/':
         filename = filename[-1]
     extension = filename.split('.')[-1]
-    assert extension in ['nrrd', 'zarr', 'tif', 'tiff', 'jpg', 'jpeg', 'png'], f'Filetype {extension} not supported'
+    assert extension in supported_extensions, f'Filetype {extension} not supported'
 
     data = None
 
@@ -33,6 +37,14 @@ def load(filename, dim_order='zyx', **kwargs):
         # Specify C-style ordering to get zyx ordering from nrrd.read
         # https://pynrrd.readthedocs.io/en/latest/user-guide.html#index-ordering
         data, metadata = nrrd.read(filename, index_order='C')
+
+    if extension in ['raw', 'vol']:
+        dtype = kwargs.get('dtype', np.uint8)
+        with open(filename, 'rb') as f:
+            if shape in kwargs:
+                im = np.fromfile(f, dtype=dtype).reshape(*shape)
+            else:
+                im = np.fromfile(f, dtype=dtype)
 
     if extension == 'zarr':
         if 'dataset' not in kwargs:
@@ -87,6 +99,7 @@ def save(data, filename, metadata=None):
     if filename[-1] == '/':
         filename = filename[-1]
     extension = filename.split('.')[-1]
+    assert extension in supported_extensions, f'Filetype {extension} not supported'
 
     if extension in ['tif', 'tiff']:
         import tifffile
@@ -105,10 +118,13 @@ def save(data, filename, metadata=None):
         # https://pynrrd.readthedocs.io/en/latest/user-guide.html#index-ordering
         nrrd.write(filename, data, header=metadata, index_order='C')
 
+    if extension in ['raw', 'vol']:
+        raise NotImplementedError
+
     if extension == 'zarr':
         raise NotImplementedError
 
-write = save
+write = save  # Function name alias
 to_file = save  # Function name alias
 
 
