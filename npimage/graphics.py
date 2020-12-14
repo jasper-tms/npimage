@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # This package contains functions for drawing basic geometric shapes, like
 # lines and triangles, into 3D numpy arrays (and the code almost works for nD
 # arrays). opencv has drawline and drawtriangle functions, but those only
