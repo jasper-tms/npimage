@@ -143,7 +143,7 @@ def show(data, mode='PIL', **kwargs):
         if os.path.exists(data):
             data = load(data)
 
-    if len(data.shape) == 3 and data.shape[2] == 3:
+    if len(data.shape) == 3 and data.shape[2] in [3, 4]:
         # RGB image. Both PIL and matplotlib can handle this.
         pass
     elif len(data.shape) != 2:
