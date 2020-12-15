@@ -139,10 +139,17 @@ def show(data, mode='PIL', **kwargs):
         colorbar=True     : Display a color bar (mpl only)
         TODO more options
     """
-    if len(data.shape) != 2:
-        raise ValueError('Input must be a 2-dimensional array to be'
-                         ' interpreted as an image, but was'
-                         f' {len(data.shape)}-dimensional.')
+    if isinstance(data, str):
+        if os.path.exists(data):
+            data = load(data)
+
+    if len(data.shape) == 3 and data.shape[2] == 3:
+        # RGB image. Both PIL and matplotlib can handle this.
+        pass
+    elif len(data.shape) != 2:
+        raise ValueError(
+            'Input array must have shape (width, height) for grayscale'
+            f' or (width, height, 3) for RGB but had dimensions {data.shape}')
 
     colorbar = False
     if 'colorbar' in kwargs:
