@@ -14,8 +14,8 @@ def load(filename, dim_order='zyx', **kwargs):
     """
     Open a 2D or 3D image file and return its pixel values as a numpy
     array.  The returned array will have dimensions ordered as zyx (or
-    yx for 2D images) as is typical for numpy. Set dim_order='xyz' to
-    transpose the image to xyz order (or xy for 2D images).
+    yx for 2D images) as is typical for python. Set dim_order='xyz' to
+    transpose the array to xyz order (or xy for 2D images).
     """
     if filename[-1] == '/':
         filename = filename[-1]
@@ -95,11 +95,21 @@ read = load  # Function name alias
 imread = load  # Function name alias
 
 
-def save(data, filename, metadata=None):
+def save(data, filename, dim_order='zyx', metadata=None):
+    """
+    Save a numpy array to disk with a file type specified by the filename
+    extension.
+    The input array is assumed to have dimensions ordered as zyx (or yx for 2D
+    images) as is typical for python. Set dim_order='xyz' if your array is in
+    xyz order (or xy for 2D images).
+    """
     if filename[-1] == '/':
         filename = filename[-1]
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
+
+    if 'xy' in dim_order:
+        data = data.T
 
     if extension in ['tif', 'tiff']:
         import tifffile
