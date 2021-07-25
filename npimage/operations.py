@@ -13,13 +13,22 @@ def offset(image: np.ndarray,
            fill_transparent=False) -> np.ndarray:
     """
     Offset an image by a given distance.
+
     'distance' must be an iterable with length matching the number of axes in
-    the image, to specify an number of pixels to offset along each axis.
+    the image, to specify an number of pixels to offset along each axis. If the
+    image is rgb or rgba (that is, the final axis has length 3 or 4), it is not
+    necessary to specify an offset for that axis and so the 'distance' iterable
+    can be one element shorter than the number of axes in the image.
+
     The pixels no longer occupied by the original image as a result of the
     offset will be filled in with 'fill_value'.
 
     See also scipy.ndimage.shift, which performs a very similar operation
     """
+    if len(image.shape) == len(distance) + 1 and image.shape[-1] in [3, 4]:
+        # Specify no offset along the channels axis, if not specified by user
+        distance = (*distance, 0)
+
     if len(image.shape) != len(distance):
         m = (f'distance must have length {len(image.shape)} to specify an'
              ' offset along each axis of the image, but instead had length'
