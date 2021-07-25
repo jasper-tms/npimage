@@ -11,6 +11,8 @@ def offset(image, distance, fill_value=0):
     eaceh axis.
     The pixels no longer occupied by the original image will be filled in with
     fill_value.
+
+    See also scipy.ndimage.shift, which performs a very similar operation
     """
     if len(image.shape) != len(distance):
         m = (f'distance must have length {len(image.shape)} to specify an'
