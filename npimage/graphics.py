@@ -73,6 +73,7 @@ def drawline(image, pt1, pt2, value, thickness=1,
     with some additional logic that allows for non-integer point coordinates.
     """
     pt1, pt2, long_axis = preprocess_polygon_vertices(pt1, pt2)
+    #print(f'after preprocessing, pt1 is {pt1}, pt2 is {pt2}, and long_axis is {long_axis}')
 
     # Deal with the start and end points as special - always draw them
     drawpoint(image, pt1, value, thickness=thickness,
@@ -99,9 +100,10 @@ def drawline(image, pt1, pt2, value, thickness=1,
         # pt2 has a long_axis value that's an integer. Find the first and
         # last times that happens, ignoring the endpoints themselves:
         pt1_adjustment = ifloor(pt1[long_axis] + 1) - pt1[long_axis]
-        pt2_adjustment = ifloor(pt2[long_axis] + 1) - pt2[long_axis]
+        pt2_adjustment = iceil(pt2[long_axis] - 1) - pt2[long_axis]
         pt1 += vec_1to2 * pt1_adjustment / vec_1to2[long_axis]
         pt2 += vec_1to2 * pt2_adjustment / vec_1to2[long_axis]
+        #print(f'Adjusted endpoints:\npt1={pt1}\npt2={pt2}')
 
     if pt1[long_axis] > pt2[long_axis]:
         return  # Line is so short that no more points need to be marked
