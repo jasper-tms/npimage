@@ -12,11 +12,16 @@ supported_extensions = [
 
 def load(filename, dim_order='zyx', **kwargs):
     """
-    Open a 2D or 3D image file and return its pixel values as a numpy
-    array.  The returned array will have dimensions ordered as zyx (or
-    yx for 2D images) as is typical for python. Set dim_order='xyz' to
-    transpose the array to xyz order (or xy for 2D images).
+    Open a 2D or 3D image file and return its pixel values as a numpy array.
+
+    As is typical for Python, the returned array will by default have
+     dimensions ordered as zyx for 3D image volumes, yx for 1-channel 2D
+     images, or yxc for multi-channel (RGB/RGBA) 2D images.
+    Set dim_order='xy' if you instead want dimensions ordered as
+     xyz for 3D image volumes, xy for 1-channel 2D images, or
+     xyc for multi-channel 2D images.
     """
+
     if filename[-1] == '/':
         filename = filename[-1]
     extension = filename.split('.')[-1]
@@ -78,7 +83,12 @@ def load(filename, dim_order='zyx', **kwargs):
             data = zarr.open(TODO) #TODO check zyx/xyz order
 
     if 'xy' in dim_order:
-        data = data.T
+        if is_rgb_or_rgba(data):
+            # Can't just transpose because if data is a multi-channel 2D
+            # image, need the channel axis to stay as the last axis.
+            data = data.swapaxes(0, 1)
+        else:
+            data = data.T
 
     if kwargs.get('metadata', False) or kwargs.get('get_metadata', False):
         try:
@@ -97,11 +107,15 @@ imread = load  # Function name alias
 
 def save(data, filename, dim_order='zyx', metadata=None):
     """
-    Save a numpy array to disk with a file type specified by the filename
-    extension.
-    The input array is assumed to have dimensions ordered as zyx (or yx for 2D
-    images) as is typical for python. Set dim_order='xyz' if your array is in
-    xyz order (or xy for 2D images).
+    Save a numpy array to file with a file type specified by the
+    filename extension.
+
+    As is typical for Python, the input array is assumed to have
+     dimensions ordered as zyx for 3D images, yx for 1-channel 2D
+     images, or yxc for multi-channel 2D images.
+    Set dim_order='xy' if your array is a 3D image in in xyz order,
+     a 1-channel 2D image in xy order, or a multi-channel 2D image
+     in xyc order.
     """
     if filename[-1] == '/':
         filename = filename[-1]
@@ -109,7 +123,12 @@ def save(data, filename, dim_order='zyx', metadata=None):
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
     if 'xy' in dim_order:
-        data = data.T
+        if is_rgb_or_rgba(data):
+            # Can't just transpose because if data is a multi-channel 2D
+            # image, need the channel axis to stay as the last axis.
+            data = data.swapaxes(0, 1)
+        else:
+            data = data.T
 
     if extension in ['tif', 'tiff']:
         import tifffile
@@ -138,11 +157,19 @@ write = save  # Function name alias
 to_file = save  # Function name alias
 
 
-def show(data, mode='PIL', **kwargs):
+def show(data, dim_order='yx', mode='PIL', **kwargs):
     """
-    Show a 2-dimensional data array as an image, using either
-    PIL.Image.fromarray(im).show() or matplotlib.pyplot.imshow(im) depending
-    on 'mode'. Uses PIL by default. Set mode='mpl' to use matplotlib.
+    Display a numpy array of pixel values as an image. Supported types:
+      1-channel (grayscale) : data.shape must be (y, x)
+      3-channel (RGB)       : data.shape must be (y, x, 3)
+      4-channel (RGBA)  : data.shape must be (y, x, 4)
+
+    If `dim_order` is set to 'xy' (instead of the default 'yx'), then
+    swap the y and x above. The channel axis must come last regardless.
+
+    Images will be shown using either `PIL.Image.fromarray(data).show()`
+    or `matplotlib.pyplot.imshow(data)` depending on 'mode'. Uses PIL by
+    default. Set mode='mpl' to use matplotlib.
 
     kwargs get passed along to Image.fromarray or pyplot.imshow,
     except a few options get parsed by this function:
@@ -153,13 +180,18 @@ def show(data, mode='PIL', **kwargs):
         if os.path.exists(data):
             data = load(data)
 
-    if len(data.shape) == 3 and data.shape[2] in [3, 4]:
-        # RGB image. Both PIL and matplotlib can handle this.
-        pass
-    elif len(data.shape) != 2:
-        raise ValueError(
-            'Input array must have shape (width, height) for grayscale'
-            f' or (width, height, 3) for RGB but had dimensions {data.shape}')
+    if not is_rgb_or_rgba(data) and data.ndim != 2:
+        m = ('Input array must have shape (y, x) for grayscale, '
+            '(y, x, 3) for RGB, or (y, x, 4) for RGBA but had '
+            f'shape {data.shape}')
+        if 'xy' in dim_order:
+            m = m.replace('y, x', 'x, y')
+        raise ValueError(m)
+
+    if 'xy' in dim_order:
+        # Can't just transpose because if data is a multi-channel 2D
+        # image, need the channel axis to stay as the last axis.
+        data = data.swapaxes(0, 1)
 
     colorbar = False
     if 'colorbar' in kwargs:
@@ -170,6 +202,7 @@ def show(data, mode='PIL', **kwargs):
     if mode.lower() in ['pil', 'pillow']:
         from PIL import Image  # pip install pillow
         Image.fromarray(data, **kwargs).show()
+
     elif mode.lower() in ['mpl', 'matplotlib', 'pyplot']:
         import matplotlib.pyplot as plt  # pip install matplotlib
         plt.imshow(data, **kwargs)
@@ -178,3 +211,18 @@ def show(data, mode='PIL', **kwargs):
         plt.show()
 
 imshow = show  # Function name alias
+
+
+def is_rgb_or_rgba(data):
+    """
+    Return True if the given numpy array has a shape indicating
+    that it's either an RGB or RGBA image.
+
+    data.shape == (i, j, 3)  ->  it's RGB, return True
+    data.shape == (i, j, 4)  ->  it's RGBA, return True
+    data.shape == anything else -> return False
+
+    """
+    if data.ndim == 3 and data.shape[2] in [3, 4]:
+        return True
+    return False
