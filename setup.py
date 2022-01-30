@@ -9,7 +9,7 @@ with open("requirements.txt", "r") as f:
 
 setuptools.setup(
     name="npimage",
-    version="0.1",
+    version="1.0.0",
     author="Jasper Phelps",
     author_email="jtmaniatesselvin@g.harvard.edu",
     description="Load and save image files as numpy arrays",
