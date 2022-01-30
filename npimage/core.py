@@ -6,7 +6,7 @@ import glob
 import numpy as np
 
 supported_extensions = [
-    'tif', 'tiff', 'jpg', 'jpeg', 'png',
+    'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
     'nrrd', 'zarr', 'raw', 'vol'
 ]
 
@@ -36,6 +36,10 @@ def load(filename, dim_order='zyx', **kwargs):
     if extension in ['tif', 'tiff']:
         import tifffile
         data = tifffile.imread(filename) #tifffile.imread returns zyx order
+
+    if extension == 'pbm':
+        from .filetypes import pbm
+        data = pbm.load(filename)  #pbm.load returns zyx
 
     if extension == 'nrrd':
         import nrrd  # pip install pynrrd
@@ -140,6 +144,10 @@ def save(data, filename, dim_order='zyx', metadata=None):
         # and print warning if user tries to save a 16- or more bit array as jpg.
         from PIL import Image  # pip install pillow
         Image.fromarray(data).save(filename)
+
+    if extension == 'pbm':
+        from .filetypes import pbm
+        pbm.save(data, filename, comments=metadata)
 
     if extension == 'nrrd':
         import nrrd  # pip install pynrrd
