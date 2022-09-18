@@ -109,7 +109,7 @@ read = load  # Function name alias
 imread = load  # Function name alias
 
 
-def save(data, filename, dim_order='zyx', metadata=None):
+def save(data, filename, dim_order='zyx', metadata=None, compress=False):
     """
     Save a numpy array to file with a file type specified by the
     filename extension.
@@ -120,11 +120,18 @@ def save(data, filename, dim_order='zyx', metadata=None):
     Set dim_order='xy' if your array is a 3D image in in xyz order,
      a 1-channel 2D image in xy order, or a multi-channel 2D image
      in xyc order.
+
+    `compress` only matters when saving in `.nrrd` format
     """
     if filename[-1] == '/':
         filename = filename[-1]
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
+
+    if compress and extension != 'nrrd':
+        print('WARNING: compress argument is ignored because not saving as '
+              '.nrrd. Whether or not compression occurs now will depend on '
+              'the format you are saving to.')
 
     if 'xy' in dim_order:
         if is_rgb_or_rgba(data):
@@ -151,6 +158,13 @@ def save(data, filename, dim_order='zyx', metadata=None):
 
     if extension == 'nrrd':
         import nrrd  # pip install pynrrd
+        if metadata is None:
+            metadata = {}
+        if 'encoding' not in metadata:
+            if compress:
+                metadata.update({'encoding': 'gzip'})
+            else:
+                metadata.update({'encoding': 'raw'})
         # Specify C-style ordering when writing zyx-ordered array using nrrd.write
         # https://pynrrd.readthedocs.io/en/latest/user-guide.html#index-ordering
         nrrd.write(filename, data, header=metadata, index_order='C')
