@@ -8,7 +8,7 @@ with open("requirements.txt", "r") as f:
     requirements = [l for l in requirements if not l.startswith('#')]
 
 setuptools.setup(
-    name="npimage",
+    name="numpyimage",
     version="1.0.0",
     author="Jasper Phelps",
     author_email="jasper.s.phelps@gmail.com",
