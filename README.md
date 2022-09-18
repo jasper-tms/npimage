@@ -32,3 +32,5 @@ As is always the case in python, consider making a virtual environment (using yo
     git clone https://github.com/jasper-tms/npimage.git
     cd npimage
     pip install .
+
+**After installing,** you can import this package in python using `import npimage` (not `import numpyimage`!)
