@@ -22,8 +22,8 @@ def load(filename, dim_order='zyx', **kwargs):
      xyc for multi-channel 2D images.
     """
 
-    if filename[-1] == '/':
-        filename = filename[-1]
+    while filename.endswith('/'):
+        filename = filename[:-1]
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
