@@ -123,8 +123,8 @@ def save(data, filename, dim_order='zyx', metadata=None, compress=False):
 
     `compress` only matters when saving in `.nrrd` format
     """
-    if filename[-1] == '/':
-        filename = filename[-1]
+    while filename.endswith('/'):
+        filename = filename[:-1]
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
