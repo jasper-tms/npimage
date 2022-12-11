@@ -551,7 +551,10 @@ def thicken(pts, thickness=1, no_duplicates=True):
     if len(pts.shape) == 1:
         pts = np.expand_dims(pts, axis=0)
 
-    if thickness is 1:
+    if isinstance(thickness, np.ndarray):
+         if (thickness == 1).all():
+            return pts
+    elif thickness in (1, (1, 1, 1), [1, 1, 1]):
         return pts
 
     try:
