@@ -7,6 +7,72 @@ import numpy as np
 from .utils import iround, eq, isint
 
 
+def to_8bit(image: np.ndarray,
+            bottom_percentile=0.4,
+            top_percentile=99.6,
+            bottom_value=None,
+            top_value=None) -> np.ndarray:
+    """
+    Convert an image to 8-bit (uint8) by scaling the image's pixel values so
+    that values <= bottom_value are mapped to 0 and values >= top_value are
+    mapped to 255. Values within the range (bottom_value, top_value) will be
+    mapped linearly into the range [1, 254]. By default, bottom_value and
+    top_value are set to percentiles of the source image's pixel values.
+    Some examples:
+    - Set bottom_percentile=0 to map only the minimum value in the source image
+      to 0 and and top_percentile=100 to map only the maximum value in the
+      source image to 255, and all other values to the range [1, 254].
+    - Set bottom_percentile=25 to map all of the the lowest 25% of the source
+      image's pixel values to 0 and set top_percentile=75 to map all of the
+      highest 25% of the source image's pixel values to 255.
+    The defaults are:
+    - bottom_percentile=0.4 (~= 100*1/256)
+    - top_percentile=99.6 (~= 100*255/256)
+    to map the bottom 1/256th of the pixel values to 0 and the top 1/256th of
+    the pixel values to 255. (Compared to using percentiles of 0 and 100, this
+    approach lessens the impact of a few extreme outlier pixel values in the
+    image.)
+
+    You may however specify bottom_value and/or top_value explicitly yourself,
+    in which case bottom_percentile and/or top_percentile will be ignored.
+
+    Algorithm:
+    - Clip values < bottom_value or > top_value
+      (i.e. replace them with bottom_value or top_value)
+    - Map the range [bottom_value, top_value] to
+      [just less than 1, just greater than 255]
+    - Cast to int (which rounds down)
+    From these two steps, values will be transformed as follows:
+    - bottom_value or less -> just less than 1 -> 0
+    - a value just greater than bottom_value -> just greater than 1 -> 1
+    - top_value or larger -> just greater than 255 -> 255
+    - a value just less than top_value -> just less than 255 -> 254
+    - values between bottom_value and top_value -> linearly mapped to
+      values between 1 and 254
+    """
+    assert isinstance(image, np.ndarray)
+
+    if bottom_value is None or top_value is None:
+        percentiles = np.percentile(image, [bottom_percentile, top_percentile])
+    if bottom_value is None:
+        bottom_value = percentiles[0]
+    if top_value is None:
+        top_value = percentiles[1]
+
+    if bottom_value == top_value:
+        raise ZeroDivisionError('top_value and bottom_value are the same: '
+                                '{}'.format(top_value))
+
+    image = np.clip(image, bottom_value, top_value)
+
+    bottom_target = 1 - 1e-12
+    top_target = 255 + 1e-12
+    return ((image.astype('float64') - bottom_value)
+            / (top_value - bottom_value)
+            * (top_target - bottom_target)
+            + bottom_target).astype('uint8')
+
+
 def offset(image: np.ndarray,
            distance: Iterable,
            fill_value=0,
