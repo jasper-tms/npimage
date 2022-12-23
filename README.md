@@ -1,5 +1,5 @@
 # npimage
-Need to load pixel values from image files as numpy arrays, and hate having to remember whether you should use PIL, tifffile, matplotlib, or something else? Hate having to deal with the fact that those libraries all use different function names and syntaxes? Wish you could just provide a filename and get back a numpy array? This library's `core.py` does that, with `array = load(filename)`, `save(array, filename)`, and `show(array)` functions that let you easily handle a number of common image file formats without having to remember library-specific syntax.
+Need to load pixel values from image files as numpy arrays, and hate having to remember whether you should use PIL, tifffile, matplotlib, or something else? Hate having to deal with the fact that those libraries all use different function names and syntaxes? Wish you could just provide a filename and get back a numpy array? This library's `core.py` does that, with `array = load(filename)`, `save(array, filename)`, and `show(array)` functions that let you easily handle a number of common image file formats without having to remember library-specific syntax. (Another choice of library to consider for accomplishing similar goals is [imageio](https://pypi.org/project/imageio/), which also supports loading videos through the FFmpeg wrapper library [pyav](https://pypi.org/project/av/).)
 
 Want to draw simple shapes like lines, triangles, and circles into 3D numpy arrays? Frustrated that the python libraries you can find online like `opencv` and `skimage.draw` work on 2D arrays but not 3D? I wrote some functions in `graphics.py` that do the trick in 3D. (If you know of another library that can do this, please let me know!)
 
@@ -8,6 +8,7 @@ Want to draw simple shapes like lines, triangles, and circles into 3D numpy arra
 - `core.py`: load, save, or show images.
 - `graphics.py`: draw points, lines, triangles, circles, or spheres into 2D or 3D numpy arrays representing image volumes.
 - `nrrd_utils.py`: compress or read metadata from `.nrrd` files.
+- `operations.py`: perform operations on images.
 
 For now, check each function's docstring for more. A jupyter notebook demonstrating this package's functions will come later.
 
