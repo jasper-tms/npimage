@@ -94,7 +94,8 @@ def load(filename, dim_order='zyx', **kwargs):
         else:
             data = data.T
 
-    if kwargs.get('metadata', False) or kwargs.get('get_metadata', False):
+    if any([kwargs.get(key, False) for key in
+            ['metadata', 'get_metadata', 'return_metadata']]):
         try:
             return data, metadata
         except:
