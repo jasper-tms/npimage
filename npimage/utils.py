@@ -3,10 +3,10 @@
 import numpy as np
 
 
-def iround(n):
+def iround(n, output_dtype=int):
     # This rounds to the nearest integer, rounding values ending in .5 up
     # (toward positive infinity)
-    return np.floor(n + 0.5).astype(int)
+    return np.floor(n + 0.5).astype(output_dtype)
 
     # "For values exactly halfway between rounded decimal values, NumPy.round
     # rounds to the nearest even value. Thus 1.5 and 2.5 round to 2.0, -0.5 and
@@ -17,12 +17,12 @@ def iround(n):
     #return np.round(n).astype(int)
 
 
-def ifloor(n):
-    return np.floor(n).astype(int)
+def ifloor(n, output_dtype=int):
+    return np.floor(n).astype(output_dtype)
 
 
-def iceil(n):
-    return np.ceil(n).astype(int)
+def iceil(n, output_dtype=int):
+    return np.ceil(n).astype(output_dtype)
 
 
 def eq(a, b, tolerance=1e-8):

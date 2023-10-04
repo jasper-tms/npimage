@@ -139,8 +139,9 @@ def downsample(image: np.ndarray,
 
     if keep_input_dtype:
         if np.issubdtype(image.dtype, np.integer):
-            image_downsampled = iround(image_downsampled)
-        image_downsampled = image_downsampled.astype(image.dtype)
+            image_downsampled = iround(image_downsampled, output_dtype=image.dtype)
+        else:
+            image_downsampled = image_downsampled.astype(image.dtype)
 
     return image_downsampled
 
@@ -225,7 +226,7 @@ def _offset_subpixel(image: np.ndarray,
 
     image_subpix_shifted = image * (1 - distance) + image_1pix_shifted * distance
     if np.issubdtype(image.dtype, np.integer):
-        image_subpix_shifted = iround(image_subpix_shifted)
+        image_subpix_shifted = iround(image_subpix_shifted, output_dtype=image.dtype)
 
     if inplace:
         image[:] = image_subpix_shifted
