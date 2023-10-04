@@ -73,6 +73,79 @@ def to_8bit(image: np.ndarray,
             + bottom_target).astype('uint8')
 
 
+def downsample(image: np.ndarray,
+               factor: [int, Iterable] = 2,
+               keep_input_dtype=True) -> np.ndarray:
+    """
+    Downsample an image by a given factor along each axis.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        The image to downsample.
+
+    factor : int or Iterable
+        An iterable with length matching the number of axes in the image,
+        specifying a downsampling factor along each axis.
+        If factor is provided as an int, that int will be used for each axis.
+        If the image is rgb or rgba (that is, the final axis has length 3 or
+        4), it is not necessary to specify a factor for that axis and so the
+        'factor' iterable can be one element shorter than the number of axes in
+        the image.
+
+    keep_input_dtype : bool
+        If True, the output image will have the same dtype as the input image.
+        If False, the output image will have dtype float64 to keep full precision.
+    """
+    if isinstance(factor, int):
+        if image.shape[-1] in [3, 4]:
+            # If RGB/RGBA image, don't downsample the colors axis
+            factor = (factor,) * (len(image.shape) - 1)
+        else:
+            factor = (factor,) * len(image.shape)
+    if len(factor) == len(image.shape) - 1 and image.shape[-1] in [3, 4]:
+        print('RGB/RGBA image detected - not downsampling last axis.')
+        factor = (*factor, 1)
+    if any([f > l > 1 for f, l in zip(factor, image.shape)]):
+        raise ValueError('Downsampling factor must be <= image size along each axis')
+
+    # In the code below, 'l' is used for the elements of image.shape and 'f' is
+    # used for the elements of factor.
+    padding = [(0, 0) if l % f == 0
+               else (0, f - l % f)
+               for l, f in zip(image.shape, factor)]
+    # Pad the image so that its axes are a multiple of the downsampling factor
+    # This is necessary because the image will be split into blocks of size
+    # 'factor' and then the mean of each block will be taken, so the image
+    # needs to be a multiple of 'factor' in size so that the blocks are all
+    # the same size.
+    image = np.pad(image, padding, mode='edge')
+    if not all([(l == 1) or (l % f == 0) for l, f in zip(image.shape, factor)]):
+        raise RuntimeError('Padding failed: shape should be a multiple of factor')
+
+    # For any dimension with length > 1, split it into blocks of size f, then
+    # average over each block.
+    temp_shape = []
+    for l, f in zip(image.shape, factor):
+        if l == 1:
+            if f != 1:
+                raise ValueError("You can't ask for downsampling along"
+                                 " an axis of length 1.")
+            temp_shape.extend([1, 1])
+        else:
+            temp_shape.extend([l // f, f])
+    axes_to_avg = tuple(range(1, len(temp_shape), 2))
+    image_downsampled = image.reshape(temp_shape).mean(axis=axes_to_avg)
+
+    if keep_input_dtype:
+        if np.issubdtype(image.dtype, np.integer):
+            image_downsampled = iround(image_downsampled)
+        image_downsampled = image_downsampled.astype(image.dtype)
+
+    return image_downsampled
+
+
+
 def offset(image: np.ndarray,
            distance: Iterable,
            fill_value=0,
