@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from collections.abc import Iterable
+import gc
 
 import numpy as np
 
@@ -165,7 +166,7 @@ def offset(image: np.ndarray,
 
     See also scipy.ndimage.shift, which performs a very similar operation
     """
-    if len(image.shape) == len(distance) + 1 and image.shape[-1] in [3, 4]:
+    if len(image.shape) == len(distance) + 1 and image.shape[-1] in [1, 3, 4]:
         # Specify no offset along the channels axis, if not specified by user
         distance = (*distance, 0)
 
@@ -224,9 +225,41 @@ def _offset_subpixel(image: np.ndarray,
                                 fill_transparent=fill_transparent)
     distance = abs(distance)
 
-    image_subpix_shifted = image * (1 - distance) + image_1pix_shifted * distance
     if np.issubdtype(image.dtype, np.integer):
-        image_subpix_shifted = iround(image_subpix_shifted, output_dtype=image.dtype)
+        # If the input array is an integer type, we should avoid creating a
+        # float version of the array during calculations, because float arrays
+        # can take up an unacceptable amount of memory. (e.g. If I write lazy
+        # code that ends up multiplying a uint8 array by a fractional value
+        # like 0.5, a float64 array is created which takes up 8x the amount of
+        # memory as the source array. And we need to make two of these!).
+        # Instead, we will do a trick of increasing the bit-depth of the source
+        # array by 1 byte, use that additional range to keep some accuracy
+        # during the weighted average calculation, then cast back to the
+        # original dtype.
+
+        upcast_dtype = np.dtype(f'{image.dtype.kind}{image.dtype.itemsize + 1}')
+        image_upcast = image.astype(upcast_dtype)
+        image_1pix_shifted_upcast = image_1pix_shifted.astype(upcast_dtype)
+
+        # We'll use the extra bit of precision to enable us to use integer
+        # weights from 0 to 255 instead of float weights from 0.0 to 1.0
+        image_weight = int(256 * (1 - distance))
+        image_1pix_shifted_weight = int(256 * distance)
+        # Adding 127 before dividing by 256 means we round to the nearest
+        # integer instead of truncating (which we'd get without the 127)
+        image_subpix_shifted = (
+            (image_upcast * image_weight) +
+            (image_1pix_shifted_upcast * image_1pix_shifted_weight) +
+            127
+        ) // 256
+        del image_upcast, image_1pix_shifted_upcast, image_1pix_shifted
+        gc.collect()
+
+        # Now cast back to the original dtype
+        image_subpix_shifted = image_subpix_shifted.astype(image.dtype)
+
+    elif np.issubdtype(image.dtype, np.floating):
+        image_subpix_shifted = image * (1 - distance) + image_1pix_shifted * distance
 
     if inplace:
         image[:] = image_subpix_shifted
