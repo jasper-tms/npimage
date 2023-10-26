@@ -9,8 +9,8 @@ from .utils import iround, eq, isint
 
 
 def to_8bit(image: np.ndarray,
-            bottom_percentile=0.4,
-            top_percentile=99.6,
+            bottom_percentile=0.05,
+            top_percentile=99.95,
             bottom_value=None,
             top_value=None) -> np.ndarray:
     """
@@ -27,12 +27,12 @@ def to_8bit(image: np.ndarray,
       image's pixel values to 0 and set top_percentile=75 to map all of the
       highest 25% of the source image's pixel values to 255.
     The defaults are:
-    - bottom_percentile=0.4 (~= 100*1/256)
-    - top_percentile=99.6 (~= 100*255/256)
-    to map the bottom 1/256th of the pixel values to 0 and the top 1/256th of
-    the pixel values to 255. (Compared to using percentiles of 0 and 100, this
-    approach lessens the impact of a few extreme outlier pixel values in the
-    image.)
+    - bottom_percentile=0.05
+    - top_percentile=99.95
+    which are ~3.3 standard deviations below and above the mean, respectively,
+    if the pixel values are approximately normally distributed. (Compared to
+    using percentiles of 0 and 100, using these percentiles lessens the impact
+    of a few extreme outlier pixel values in the image.)
 
     You may however specify bottom_value and/or top_value explicitly yourself,
     in which case bottom_percentile and/or top_percentile will be ignored.
@@ -43,7 +43,7 @@ def to_8bit(image: np.ndarray,
     - Map the range [bottom_value, top_value] to
       [just less than 1, just greater than 255]
     - Cast to int (which rounds down)
-    From these two steps, values will be transformed as follows:
+    From these steps, values will be transformed as follows:
     - bottom_value or less -> just less than 1 -> 0
     - a value just greater than bottom_value -> just greater than 1 -> 1
     - top_value or larger -> just greater than 255 -> 255
@@ -68,6 +68,8 @@ def to_8bit(image: np.ndarray,
 
     bottom_target = 1 - 1e-12
     top_target = 255 + 1e-12
+    # TODO some more clever implementation that doesn't require casting to
+    # float64, which can take up a lot of memory.
     return ((image.astype('float64') - bottom_value)
             / (top_value - bottom_value)
             * (top_target - bottom_target)
