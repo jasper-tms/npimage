@@ -235,11 +235,12 @@ def _offset_subpixel(image: np.ndarray,
         # like 0.5, a float64 array is created which takes up 8x the amount of
         # memory as the source array. And we need to make two of these!).
         # Instead, we will do a trick of increasing the bit-depth of the source
-        # array by 1 byte, use that additional range to keep some accuracy
-        # during the weighted average calculation, then cast back to the
-        # original dtype.
+        # array by 1 byte (or a few bytes, since numpy only works with bit
+        # depths that are a power of 2, e.g. uint24 isn't a thing), use that
+        # additional range to keep some accuracy during the weighted average
+        # calculation, then cast back to the original dtype.
 
-        upcast_dtype = np.dtype(f'{image.dtype.kind}{image.dtype.itemsize + 1}')
+        upcast_dtype = np.dtype(f'{image.dtype.kind}{image.dtype.itemsize * 2}')
         image_upcast = image.astype(upcast_dtype)
         image_1pix_shifted_upcast = image_1pix_shifted.astype(upcast_dtype)
 
