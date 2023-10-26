@@ -151,8 +151,11 @@ def downsample(image: np.ndarray,
 
 
 def offset(image: np.ndarray,
-           distance: Iterable,
-           fill_value=0,
+           distance: float or Iterable[float],
+           axis: int = None,
+           expand_bounds: bool = False,
+           edge_mode: ['extend', 'wrap', 'reflect', 'constant'] = 'extend',
+           edge_fill_value=0,
            fill_transparent=False) -> np.ndarray:
     """
     Offset an image by a given distance.
@@ -163,11 +166,30 @@ def offset(image: np.ndarray,
     necessary to specify an offset for that axis and so the 'distance' iterable
     can be one element shorter than the number of axes in the image.
 
-    The pixels no longer occupied by the original image as a result of the
-    offset will be filled in with 'fill_value'.
+    If edge_mode is set to 'constant', the pixels no longer occupied by the
+    original image as a result of the offset will be filled in with
+    'edge_fill_value'.
 
     See also scipy.ndimage.shift, which performs a very similar operation
     """
+    try:
+        iter(distance)
+        if axis is not None:
+            raise ValueError('Either give distance as one number and specify'
+                             ' axis, or give distance as an iterable. You'
+                             ' did a mix of those two.')
+    except TypeError:
+        distance_iter = [0] * len(image.shape)
+        if axis is None:
+            raise ValueError('Must specify axis when giving distance as a'
+                             ' single number.')
+        distance_iter[axis] = distance
+        distance = distance_iter
+    if edge_mode not in ['extend', 'wrap', 'reflect', 'constant']:
+        raise ValueError("edge_mode must be one of 'extend', 'wrap', 'reflect', or 'constant'")
+    if edge_mode in ['wrap', 'reflect']:
+        raise NotImplementedError("edge_mode '{}' not yet implemented".format(edge_mode))
+
     if len(image.shape) == len(distance) + 1 and image.shape[-1] in [1, 3, 4]:
         # Specify no offset along the channels axis, if not specified by user
         distance = (*distance, 0)
@@ -178,7 +200,12 @@ def offset(image: np.ndarray,
              f' {len(distance)}')
         raise ValueError(m)
 
-    new_image = np.full_like(image, fill_value)  # Blank image filled with fill_value
+    if not expand_bounds:
+        new_image = np.full_like(image, edge_fill_value)
+    else:
+        new_shape = np.array(image.shape) + np.array([int(max(0, d)) for d in distance])
+        new_image = np.full(new_shape, edge_fill_value, dtype=image.dtype)
+
     if image.shape[-1] == 4 and not fill_transparent:
         # If rgba, set alpha channel value to max
         # The line below means new_image[:, :, :, ..., :, -1] = 255
@@ -186,14 +213,15 @@ def offset(image: np.ndarray,
 
     distance_int = [int(x) for x in distance]
 
-    source_range = [slice(max(0, -d), min(s, s-d)) for d, s in zip(distance_int, image.shape)]
-    target_range = [slice(max(0, d), min(s, s+d)) for d, s in zip(distance_int, image.shape)]
+    source_range = [slice(max(0, -d), min(s, s-d)) for d, s in zip(distance_int, new_image.shape)]
+    target_range = [slice(max(0, d), min(s, s+d)) for d, s in zip(distance_int, new_image.shape)]
 
     new_image[tuple(target_range)] = image[tuple(source_range)]
 
     for i, d in enumerate(distance):
         if not eq(d, int(d)):
-            _offset_subpixel(new_image, d - int(d), i, fill_value=fill_value,
+            _offset_subpixel(new_image, d - int(d), i,
+                             edge_fill_value=edge_fill_value,
                              fill_transparent=fill_transparent, inplace=True)
 
     return new_image
@@ -202,7 +230,8 @@ def offset(image: np.ndarray,
 def _offset_subpixel(image: np.ndarray,
                      distance: float,
                      axis: int,
-                     fill_value=0,
+                     edge_mode: ['extend', 'wrap', 'reflect', 'constant'] = 'extend',
+                     edge_fill_value=0,
                      fill_transparent=False,
                      inplace=False):
     """
@@ -217,13 +246,14 @@ def _offset_subpixel(image: np.ndarray,
     etc.
 
     The pixels no longer occupied by the original image as a result of the
-    offset will be filled in with 'fill_value'.
+    offset will be filled in with 'edge_fill_value'.
     """
     assert -1 < distance and distance < 1
 
     one_pix_offset = [0] * len(image.shape)
     one_pix_offset[axis] = 1 if distance >= 0 else -1
-    image_1pix_shifted = offset(image, one_pix_offset, fill_value=fill_value,
+    image_1pix_shifted = offset(image, one_pix_offset,
+                                edge_fill_value=edge_fill_value,
                                 fill_transparent=fill_transparent)
     distance = abs(distance)
 
