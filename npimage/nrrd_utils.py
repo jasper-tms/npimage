@@ -38,14 +38,19 @@ def compress(*fn_patterns, keep_uncompressed=False):
             nrrd.write(fn, data, header=header)
 
 
-def read_headers(*fn_patterns):
+def read_headers(*fn_patterns, verbose=True):
+    headers = dict()
     if len(fn_patterns) == 0:
         fn_patterns = ['*.nrrd']
-        print('Reading headers of all nrrd files in this directory.\n')
+        if verbose:
+            print('Reading headers of all nrrd files in this directory.')
     for fn_pattern in fn_patterns:
-        for fn in glob.glob(fn_pattern):
-            print(fn)
-            print(nrrd.read_header(fn), '\n')
+        for fn in sorted(glob.glob(fn_pattern)):
+            if verbose:
+                print(f'Reading header of {fn}')
+            headers[fn] = nrrd.read_header(fn)
+
+    return headers
 
 
 if __name__ == '__main__':
