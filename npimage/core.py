@@ -110,7 +110,7 @@ read = load  # Function name alias
 imread = load  # Function name alias
 
 
-def save(data, filename, dim_order='zyx', metadata=None, compress=False):
+def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compress=False):
     """
     Save a numpy array to file with a file type specified by the
     filename extension.
@@ -124,8 +124,10 @@ def save(data, filename, dim_order='zyx', metadata=None, compress=False):
 
     `compress` only matters when saving in `.nrrd` format
     """
-    while filename.endswith('/'):
-        filename = filename[:-1]
+    filename = filename.rstrip('/')
+    if os.path.exists(filename) and not overwrite:
+        raise Exception(f'File {filename} already exists. '
+                        'Set overwrite=True to overwrite.')
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
