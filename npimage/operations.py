@@ -302,6 +302,113 @@ def _offset_subpixel(image: np.ndarray,
         return image_subpix_shifted
 
 
+def paste(image: np.ndarray,
+          target: np.ndarray,
+          offset: Iterable[float]):
+    """
+    Paste an image onto another image at a given offset.
+
+    `target` is modified in place. Regions of `image` that would be
+    pasted outside the bounds of `target` are ignored.
+    """
+    image = image.copy()
+    offset_int = [int(x) for x in offset]
+    offset_subpixel = [x - int(x) for x in offset]
+    for i, offset in enumerate(offset_subpixel):
+        if not eq(offset, 0):
+            _offset_subpixel(image, offset, i, inplace=True)
+
+    source_range = [slice(max(0, -o), min(s, t-o))
+                    for o, s, t in zip(offset_int, image.shape, target.shape)]
+    target_range = [slice(max(0, o), min(t, max(0, o) + min(s, t-o) - max(0, -o)))
+                    for o, s, t in zip(offset_int, image.shape, target.shape)]
+
+    target[tuple(target_range)] = image[tuple(source_range)]
+
+
+def overlay(ims: list[np.ndarray],
+            offsets: list[tuple[float]],
+            later_images_on_top=True,
+            expand_bounds=False,
+            fill_value=0):
+    """
+    Overlay multiple images / image volumes onto each other, with each
+    image offset by a given amount.
+
+    Parameters
+    ----------
+    ims : list of np.ndarray
+        The images or image volumes to overlay.
+
+    offsets : list of tuple of float
+        The offsets to apply to each image volume. Each tuple should
+        have the same length as the number of dimensions in the
+        corresponding images.
+
+    later_images_on_top : bool
+        If True, the later images in the list will be drawn on top of
+        the earlier images. If False, the earlier images will be drawn
+        on top of the later images.
+
+    expand_bounds : bool
+        If True, the output image will be large enough to contain all
+        of the input images. If False, the output image will be the same
+        size as the first input image.
+    """
+    if not len(ims) == len(offsets):
+        raise ValueError('The number of images must match the number of offsets.')
+    ndims = ims[0].ndim
+    if not all([im.ndim == ndims for im in ims[1:]]):
+        raise ValueError('All images must have the same number of dimensions.')
+    if not all([len(offset) == ndims for offset in offsets]):
+        raise ValueError('All offsets must have the same length as the number'
+                         ' of dimensions in the images.')
+
+    if expand_bounds:
+        origin = [min([0] + [offset[axis] for offset in offsets])
+                  for axis in range(ndims)]
+        max_coord = [max([im.shape[axis] + offset[axis]
+                          for im, offset in zip(ims, offsets)])
+                     for axis in range(ndims)]
+        canvas_shape = [max_coord[axis] - origin[axis] for axis in range(ndims)]
+        offsets = [tuple(offset[axis] - origin[axis] for axis in range(ndims))
+                   for offset in offsets]
+        canvas = np.full(canvas_shape, fill_value, dtype=ims[0].dtype)
+    else:
+        canvas = np.full_like(ims[0], fill_value)
+
+    if not later_images_on_top:
+        ims = reversed(ims)
+        offsets = reversed(offsets)
+
+    for im, offset in zip(ims, offsets):
+        paste(im, canvas, offset)
+
+    return canvas
+
+
+def overlay_two_images(im1: np.ndarray,
+                       im2: np.ndarray,
+                       offset: Iterable[float] = 0,
+                       later_images_on_top=True,
+                       expand_bounds=False,
+                       fill_value=0):
+    """
+    Overlay two images, with the second image offset by the given amount.
+    """
+    if isint(offset):
+        offset = [offset] * im1.ndim
+    if expand_bounds:
+        offsets = ([abs(max(0, -o)) for o in offset], [max(0, o) for o in offset])
+    else:
+        offsets = ([0] * len(offset), offset)
+    return overlay([im1, im2],
+                   offsets,
+                   later_images_on_top=later_images_on_top,
+                   expand_bounds=expand_bounds,
+                   fill_value=fill_value)
+
+
 def remove_bleedthrough(im, contaminated_slice, source_slice,
                         leave_saturated_pixels_alone=True):
     """
