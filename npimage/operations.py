@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from collections.abc import Iterable
+from typing import Literal
 import gc
 
 import numpy as np
@@ -132,7 +133,7 @@ def downsample(image: np.ndarray,
     for l, f in zip(image.shape, factor):
         if l == 1:
             if f != 1:
-                raise ValueError("You can't ask for downsampling along"
+                raise ValueError("You can't downsample along"
                                  " an axis of length 1.")
             temp_shape.extend([1, 1])
         else:
@@ -149,12 +150,12 @@ def downsample(image: np.ndarray,
     return image_downsampled
 
 
-
 def offset(image: np.ndarray,
            distance: float or Iterable[float],
            axis: int = None,
            expand_bounds: bool = False,
-           edge_mode: ['extend', 'wrap', 'reflect', 'constant'] = 'extend',
+           edge_mode: Literal['extend', 'wrap',
+                              'reflect', 'constant'] = 'extend',
            edge_fill_value=0,
            fill_transparent=False) -> np.ndarray:
     """
@@ -230,7 +231,8 @@ def offset(image: np.ndarray,
 def _offset_subpixel(image: np.ndarray,
                      distance: float,
                      axis: int,
-                     edge_mode: ['extend', 'wrap', 'reflect', 'constant'] = 'extend',
+                     edge_mode: Literal['extend', 'wrap',
+                                        'reflect', 'constant'] = 'extend',
                      edge_fill_value=0,
                      fill_transparent=False,
                      inplace=False):
