@@ -18,7 +18,6 @@ setuptools.setup(
     url="https://github.com/jasper-tms/npimage",
     license='GNU GPL v3',
     packages=setuptools.find_packages(),
-    #package_data={'npimage': ['requirements.txt']},
     classifiers=[
         "Programming Language :: Python :: 3",
         'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
