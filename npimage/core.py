@@ -178,8 +178,51 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
     if extension == 'zarr':
         raise NotImplementedError
 
+
 write = save  # Function name alias
 to_file = save  # Function name alias
+
+
+def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
+               framerate=30, crf=23, compression_speed='medium'):
+    """
+    Save a 3D numpy array as a video, with a specified axis as the time axis.
+
+    Follows the PyAV cookbook section on generating video from numpy arrays:
+    https://pyav.basswood-io.com/docs/develop/cookbook/numpy.html#generating-video
+    """
+    if not data.ndim == 3:
+        raise ValueError('Input data must be a 3D numpy array.')
+    try:
+        import av
+    except ImportError:
+        raise ImportError('To save videos, you must have PyAV installed. '
+                          'You can install it with "pip install av".')
+    data = np.moveaxis(data, time_axis, 0)
+    if 'xy' in dim_order:
+        data = data.swapaxes(1, 2)
+    n_frames = data.shape[0]
+
+    if os.path.exists(filename) and not overwrite:
+        raise Exception(f'File {filename} already exists. '
+                        'Set overwrite=True to overwrite.')
+    container = av.open(filename, mode='w')
+
+    stream = container.add_stream('libx264', rate=framerate)
+    stream.pix_fmt = 'yuv420p'
+    stream.options = {'crf': str(crf), 'preset': compression_speed}
+    stream.height = data.shape[1]
+    stream.width = data.shape[2]
+
+    for frame_i in range(n_frames):
+        frame = av.VideoFrame.from_ndarray(data[frame_i], format='gray')
+        for packet in stream.encode(frame):
+            container.mux(packet)
+
+    for packet in stream.encode():
+        container.mux(packet)
+
+    container.close()
 
 
 def show(data, dim_order='yx', mode='PIL', **kwargs):
