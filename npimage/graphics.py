@@ -22,7 +22,7 @@
 # convention because integer locations like (5, 2, 10) point to the middle of a
 # voxel. This convention can be selected by passing convention='center' to any
 # of the functions in this package (once I finish implementing it).
-# 
+#
 # Functions in this package use non-integer data types to preserve accuracy,
 # only flooring or rounding (depending on the convention) during get-pixel or
 # set-pixel operations.
@@ -49,7 +49,7 @@ import itertools
 import numpy as np
 np.set_printoptions(suppress=True)
 
-from .utils import *
+from .utils import eq, ifloor, iceil, iround
 
 
 # --- Primitive shapes - points, lines, triangles, circles, spheres --- #
@@ -123,7 +123,7 @@ def drawline(image, pt1, pt2, value, thickness=1,
     # slightly (20%) faster than calling drawpoint - despite drawpoint
     # literally just calling thicken and then imset itself. ???
     pts = thicken(pts, thickness)
-    imset(image, pts, value, 
+    imset(image, pts, value,
           convention=convention, out_of_bounds=out_of_bounds)
 
 
@@ -216,7 +216,7 @@ def drawcircle(image, center, perpendicular, radius, value,
     Draw a circle
     See drawpoint for all kwargs.
     """
-    ndims = 3  #TODO code up logic for determining this from the input
+    ndims = 3  # TODO code up logic for determining this from the input
     return_image = False
     if image is None and center is None:
         image = np.zeros((2*iceil(radius) + 1,)*ndims, dtype=np.uint8)
@@ -384,8 +384,8 @@ def imget(image, coords, convention='corner',
             if verbose:
                 warn()
         elif out_of_bounds == 'raise':
-            raise IndexError(f'Some coordinates out of bounds:\n'
-                             '{coords[is_out_of_bounds]}')
+            raise IndexError('Some coordinates out of bounds:\n'
+                             f'{coords[is_out_of_bounds]}')
         else:
             raise ValueError("out_of_bounds must be 'ignore', 'raise', or"
                              f"'wrap' but was {out_of_bounds}.")
@@ -424,8 +424,8 @@ def imset(image, coords, value, convention='corner', out_of_bounds='ignore'):
         elif out_of_bounds == 'wrap':
             coords = coords[~exceeds_dimensions.any(axis=1)]
         elif out_of_bounds == 'raise':
-            raise IndexError(f'Some coordinates out of bounds:\n'
-                             '{coords[is_out_of_bounds]}')
+            raise IndexError('Some coordinates out of bounds:\n'
+                             f'{coords[is_out_of_bounds]}')
         else:
             raise ValueError("out_of_bounds must be 'ignore', 'raise', or"
                              f"'wrap' but was {out_of_bounds}.")
@@ -478,12 +478,12 @@ def drawmesh(image, mesh_fn, value=255, verbose=True,
     if verbose:
         for i in range(n):
             print(f'Drawing triangle {i+1} of {n}')
-            drawtriangle(image, v0[i], v1[i], v2[i], value, fill_value=value,
-                    **kwargs)
+            drawtriangle(image, v0[i], v1[i], v2[i], value,
+                         fill_value=value, **kwargs)
     else:
         for i in range(n):
-            drawtriangle(image, v0[i], v1[i], v2[i], value, fill_value=value,
-                    **kwargs)
+            drawtriangle(image, v0[i], v1[i], v2[i], value,
+                         fill_value=value, **kwargs)
 
 
 # --- Misc graphics operations --- #
@@ -552,7 +552,7 @@ def thicken(pts, thickness=1, no_duplicates=True):
         pts = np.expand_dims(pts, axis=0)
 
     if isinstance(thickness, np.ndarray):
-         if (thickness == 1).all():
+        if (thickness == 1).all():
             return pts
     elif thickness in (1, (1, 1, 1), [1, 1, 1]):
         return pts
@@ -570,13 +570,13 @@ def thicken(pts, thickness=1, no_duplicates=True):
         #offsets = get_voxels_within_distance(thickness)
     #else:
     offsets = np.array(list(itertools.product(*[range(-i//2 + 1, i//2 + 1)
-                                       for i in thickness])))
+                                                for i in thickness])))
 
     new_pts = np.concatenate([pts + offset for offset in offsets])
 
-
-    if no_duplicates: #TODO test if the added time here is worth the savings
-                      #when imsetting the resulting points
+    # TODO test if the added time here is worth the time savings
+    # when imsetting the resulting points
+    if no_duplicates:
         new_pts = np.unique(new_pts, axis=0)
 
     return new_pts
@@ -598,9 +598,9 @@ def get_voxels_within_distance(distance, center=None, ndims=None,
     assert metric in ['euclidian', 'manhattan', 'chebyshev']
 
     if ndims is None:
-        if center != None:
+        if center is not None:
             ndims = len(center)
-        elif voxel_size != None:
+        elif voxel_size is not None:
             ndims = len(voxel_size)
         else:
             ndims = 3
@@ -653,10 +653,10 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
     if verbose: print(f'seed_value={seed_value}')
     if fill_diagonally:
         neighbors = get_voxels_within_distance(1, ndims=len(image.shape),
-                metric='chebyshev')
+                                               metric='chebyshev')
     else:
         neighbors = get_voxels_within_distance(1, ndims=len(image.shape))
-        
+
     if verbose: print(f'neighbors={neighbors}')
     neighbors = neighbors[~(neighbors == 0).all(axis=1)]
     fill_mask = np.zeros(image.shape, dtype=bool)
@@ -698,12 +698,11 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
             and (neighbor < image.shape).all()
             and eq(imget(image, neighbor), seed_value, tolerance=tolerance)
             and not imget(fill_mask, neighbor)]
-        for coord in wavefront]
+         for coord in wavefront]
 
         if debug_frequency is not None and iteration % debug_frequency == 0:
             print(f'Writing iteration{iteration}.nrrd')
             npimage.numpy_to_imagefile(image, f'iteration{iteration}.nrrd')
-
 
         #recurseifneighbors
         if len(new_wavefront) > 0:
@@ -739,6 +738,3 @@ def to_voxel_coordinates(physical_coordinates, voxel_size, offset=0):
     #print(f'offset={offset}')
     #print(f'voxel_size={voxel_size}')
     return (physical_coordinates - offset) / voxel_size
-
-
-

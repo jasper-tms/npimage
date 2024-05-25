@@ -41,5 +41,3 @@ def isint(n):
                 for a in n]
     except TypeError:
         return isinstance(n, int) or np.issubdtype(type(n), np.integer)
-
-
