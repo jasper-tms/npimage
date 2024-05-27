@@ -27,7 +27,6 @@ def load(filename):
         data = data.reshape((h, w)).view(bool)
 
     return data
-    
 
 
 def save(data, filename, comments=None):

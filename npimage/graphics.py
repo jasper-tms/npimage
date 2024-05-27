@@ -1,46 +1,48 @@
 #!/usr/bin/env python3
-# This package contains functions for drawing basic geometric shapes, like
-# lines and triangles, into 3D numpy arrays (and the code almost works for nD
-# arrays). opencv has drawline and drawtriangle functions, but those only
-# operate on 2D image arrays. scipy.ndimage provides many other helpful,
-# related functions for working with nD image arrays.
+"""
+This package contains functions for drawing basic geometric shapes, like
+lines and triangles, into 3D numpy arrays (and the code almost works for nD
+arrays). opencv has drawline and drawtriangle functions, but those only
+operate on 2D image arrays. scipy.ndimage provides many other helpful,
+related functions for working with nD image arrays.
 
-# Subpixel indexing conventions:
-#
-# 'corner' convention (default): An operation that tries to get or set a pixel
-# located at (x, y, z) will actually get or set the pixel with index (floor(x),
-# floor(y), floor(z)). Therefore the pixel at location (x, y, z) represents the
-# cube of physical locations (a, b, c) such that a is in [x, x+1), b is in [y,
-# y+1), and c is [z, z+1). This is called the 'corner' convention because
-# integer locations like (5, 2, 10) point to the corner of a voxel.
-#
-# 'center' convention: An operation that tries to get or set a pixel located at
-# (x, y, z) will actually get or set the pixel with index (round(x), round(y),
-# round(z)). Therefore the pixel at location (x, y, z) represents the cube of
-# physical locations (a, b, c) such that a is in [x-0.5, x+0.5), b is in
-# [y-0.5, y+0.5), and c is in [z-0.5, z+0.5). This is called the 'center'
-# convention because integer locations like (5, 2, 10) point to the middle of a
-# voxel. This convention can be selected by passing convention='center' to any
-# of the functions in this package (once I finish implementing it).
-#
-# Functions in this package use non-integer data types to preserve accuracy,
-# only flooring or rounding (depending on the convention) during get-pixel or
-# set-pixel operations.
+Subpixel indexing conventions:
+
+'corner' convention (default): An operation that tries to get or set a pixel
+located at (x, y, z) will actually get or set the pixel with index (floor(x),
+floor(y), floor(z)). Therefore the pixel at location (x, y, z) represents the
+cube of physical locations (a, b, c) such that a is in [x, x+1), b is in [y,
+y+1), and c is [z, z+1). This is called the 'corner' convention because
+integer locations like (5, 2, 10) point to the corner of a voxel.
+
+'center' convention: An operation that tries to get or set a pixel located at
+(x, y, z) will actually get or set the pixel with index (round(x), round(y),
+round(z)). Therefore the pixel at location (x, y, z) represents the cube of
+physical locations (a, b, c) such that a is in [x-0.5, x+0.5), b is in
+[y-0.5, y+0.5), and c is in [z-0.5, z+0.5). This is called the 'center'
+convention because integer locations like (5, 2, 10) point to the middle of a
+voxel. This convention can be selected by passing convention='center' to any
+of the functions in this package (once I finish implementing it).
+
+Functions in this package use non-integer data types to preserve accuracy,
+only flooring or rounding (depending on the convention) during get-pixel or
+set-pixel operations.
 
 
-# LIST OF MAJOR TODOS
+LIST OF MAJOR TODOS
 
-# Implement 'center' convention logic for all functions.
+Implement 'center' convention logic for all functions.
 
-# Make the image argument optional for drawpoint, drawline, and drawtriangle,
-# in which case they should create an image just large enough to hold the drawn
-# object and then return that image
+Make the image argument optional for drawpoint, drawline, and drawtriangle,
+in which case they should create an image just large enough to hold the drawn
+object and then return that image
 
-# Make get_voxels_within_distance be able to take a multidimensional distance
-# argument, in which case it should return all the voxels within an ellipse
-# having its radii along each axis specified by the elements of distance. This
-# is an extension of the current functionality, since currently a sphere is
-# returned with radius in all dimensions equal to the int/float distance.
+Make get_voxels_within_distance be able to take a multidimensional distance
+argument, in which case it should return all the voxels within an ellipse
+having its radii along each axis specified by the elements of distance. This
+is an extension of the current functionality, since currently a sphere is
+returned with radius in all dimensions equal to the int/float distance.
+"""
 
 
 import math
@@ -72,7 +74,7 @@ def drawline(image, pt1, pt2, value, thickness=1,
     https://www.tutorialspoint.com/computer_graphics/line_generation_algorithm.htm
     with some additional logic that allows for non-integer point coordinates.
     """
-    pt1, pt2, long_axis = preprocess_polygon_vertices(pt1, pt2)
+    pt1, pt2, long_axis = _preprocess_polygon_vertices(pt1, pt2)
     #print(f'after preprocessing, pt1 is {pt1}, pt2 is {pt2}, and long_axis is {long_axis}')
 
     # Deal with the start and end points as special - always draw them
@@ -140,7 +142,7 @@ def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
                  convention=convention, out_of_bounds=out_of_bounds)
         return
 
-    pt1, pt2, pt3, long_axis = preprocess_polygon_vertices(pt1, pt2, pt3)
+    pt1, pt2, pt3, long_axis = _preprocess_polygon_vertices(pt1, pt2, pt3)
 
     vec_1to3 = pt3 - pt1
     if eq(vec_1to3[long_axis], 0):
@@ -488,14 +490,14 @@ def drawmesh(image, mesh_fn, value=255, verbose=True,
 
 # --- Misc graphics operations --- #
 suffixes = {1: 'st', 2: 'nd', 3: 'rd'}
-def preprocess_polygon_vertices(*pts):
+def _preprocess_polygon_vertices(*pts):
     """
     Given a list of polygon vertices, find the axis along which the polygon is
     longest, and order the points by their position along that axis.
     returns a tuple containing the ordered points plus an integer indicating
     the longest axis.
     Usage example:
-        pt1, pt2, long_axis = preprocess_polygon_vertices(image, pt1, pt2)
+        pt1, pt2, long_axis = _preprocess_polygon_vertices(image, pt1, pt2)
     """
     # TODO TODO TODO make this aware of voxel sizes!! If voxel size is
     # anisotropic, the longest axis according to its physical space measurement
@@ -648,7 +650,6 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
     """
     This implementation is very slow and needs improvement
     """
-    import npimage
     seed_value = image[seed]
     if verbose: print(f'seed_value={seed_value}')
     if fill_diagonally:
@@ -702,7 +703,8 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
 
         if debug_frequency is not None and iteration % debug_frequency == 0:
             print(f'Writing iteration{iteration}.nrrd')
-            npimage.numpy_to_imagefile(image, f'iteration{iteration}.nrrd')
+            from .core import save
+            save(image, f'iteration{iteration}.nrrd')
 
         #recurseifneighbors
         if len(new_wavefront) > 0:
@@ -721,7 +723,7 @@ def to_physical_coordinates(voxel_coordinates, voxel_size, offset=0):
     (in units of microns per voxel) and offset (indicating the physical
     coordinates of the origin voxel, in microns)
     """
-    #TODO test this. Haven't yet run it.
+    #TODO test this.
     return voxel_coordinates * voxel_size + offset
 
 

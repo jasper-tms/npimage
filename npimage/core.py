@@ -2,6 +2,7 @@
 
 import os
 import glob
+from builtins import open as builtin_open
 
 import numpy as np
 
@@ -39,7 +40,7 @@ def load(filename, dim_order='zyx', **kwargs):
 
     if extension == 'pbm':
         from .filetypes import pbm
-        data = pbm.load(filename)  #pbm.load returns zyx
+        data = pbm.load(filename)  # pbm.load returns zyx
 
     if extension == 'nrrd':
         import nrrd  # pip install pynrrd
@@ -49,11 +50,10 @@ def load(filename, dim_order='zyx', **kwargs):
 
     if extension in ['raw', 'vol']:
         dtype = kwargs.get('dtype', np.uint8)
-        with open(filename, 'rb') as f:
-            if shape in kwargs:
-                im = np.fromfile(f, dtype=dtype).reshape(*shape)
-            else:
-                im = np.fromfile(f, dtype=dtype)
+        with builtin_open(filename, 'rb') as f:
+            data = np.fromfile(f, dtype=dtype)
+        if 'shape' in kwargs:
+            data = data.reshape(*kwargs['shape'])
 
     if extension == 'zarr':
         if 'dataset' not in kwargs:
