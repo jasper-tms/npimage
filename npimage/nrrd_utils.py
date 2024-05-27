@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
+"""
+Functions for working with .nrrd files
 
-# Utility functions for nrrd files
+Function list:
+- compress(filenames) -> Creates a gzip-compressed version of the file(s)
+- read_headers(filenames) -> dict
+"""
 
 import sys
 import os

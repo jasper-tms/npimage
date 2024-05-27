@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+Functions that manipulate pixel data in an image in some way.
+
+Function list:
+- to_8bit: Convert from whatever bit-depth to 8-bit.
+- downsample: Reduce the size of an image by a given factor.
+- offset: Shift an image by a given distance.
+- paste: Paste one image onto another at a given offset.
+- overlay: Overlay multiple images onto a canvas at given offsets.
+- overlay_two_images: Overlay two images with the second one offset.
+"""
 
 from collections.abc import Iterable
 from typing import Literal

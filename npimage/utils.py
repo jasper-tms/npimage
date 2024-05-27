@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+Mostly tiny wrappers around existing numpy functions.
+
+Function list:
+- iround (round and cast to int)
+- ifloor (round down and cast to int)
+- iceil (round up and cast to int)
+- eq (test if two objects are equal within a small tolerance)
+- isint (test if an object or each element in an iterable object is an int/np.int)
+"""
 
 import numpy as np
 

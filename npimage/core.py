@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""
+Functions for reading, writing, and showing images.
+
+Function list:
+- load(filename) -> numpy.ndarray
+- save(data, filename) -> Saves a numpy array as an nD image file
+- save_video(data, filename) -> Saves a 3D numpy array as a video
+- show(np_array) -> Displays a numpy array of pixel values as an image
+"""
 
 import os
 import glob
