@@ -400,19 +400,20 @@ def overlay(ims: list[np.ndarray],
 
 def overlay_two_images(im1: np.ndarray,
                        im2: np.ndarray,
-                       offset: Iterable[float] = 0,
+                       im2_offset: Iterable[float] = 0,
                        later_images_on_top=True,
                        expand_bounds=False,
                        fill_value=0):
     """
     Overlay two images, with the second image offset by the given amount.
     """
-    if isint(offset):
-        offset = [offset] * im1.ndim
+    if isint(im2_offset):
+        im2_offset = [im2_offset] * im2.ndim
     if expand_bounds:
-        offsets = ([abs(max(0, -o)) for o in offset], [max(0, o) for o in offset])
+        offsets = ([max(0, -o) for o in im2_offset],
+                   [max(0, o) for o in im2_offset])
     else:
-        offsets = ([0] * len(offset), offset)
+        offsets = ([0] * len(im2_offset), im2_offset)
     return overlay([im1, im2],
                    offsets,
                    later_images_on_top=later_images_on_top,
