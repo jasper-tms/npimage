@@ -322,7 +322,12 @@ def paste(image: np.ndarray,
     `target` is modified in place. Regions of `image` that would be
     pasted outside the bounds of `target` are ignored.
     """
-    image = image.copy()
+    try:
+        iter(offset)
+    except TypeError:
+        offset = [offset] * len(image.shape)
+    if len(offset) != image.ndim:
+        raise ValueError('The length of the offset must match the number of dimensions in the image.')
     offset_int = [int(x) for x in offset]
     offset_subpixel = [x - int(x) for x in offset]
     for i, offset in enumerate(offset_subpixel):
