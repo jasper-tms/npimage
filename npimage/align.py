@@ -64,8 +64,6 @@ def find_landmark(image: np.ndarray,
         else:
             raise ValueError(f"Invalid search_bbox: {search_bbox}. Must "
                              "be two slices or two (min, max) pairs.")
-        print('img_to_search.shape:', img_to_search.shape)
-        print('offset:', offset)
     else:
         img_to_search = image
         offset = (0, 0)
