@@ -15,6 +15,8 @@ from builtins import open as builtin_open
 
 import numpy as np
 
+from . import utils
+
 supported_extensions = [
     'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
     'nrrd', 'zarr', 'raw', 'vol'
@@ -54,8 +56,10 @@ def load(filename, dim_order='zyx', **kwargs):
     if extension == 'nrrd':
         import nrrd  # pip install pynrrd
         # Specify C-style ordering to get zyx ordering from nrrd.read
-        # https://pynrrd.readthedocs.io/en/latest/user-guide.html#index-ordering
+        # https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
         data, metadata = nrrd.read(filename, index_order='C')
+        # Metadata is in Fortran order, so flip it to C order
+        utils.transpose_metadata(metadata, inplace=True)
 
     if extension in ['raw', 'vol']:
         dtype = kwargs.get('dtype', np.uint8)
@@ -102,6 +106,9 @@ def load(filename, dim_order='zyx', **kwargs):
             data = data.swapaxes(0, 1)
         else:
             data = data.T
+
+        if extension == 'nrrd':  # TODO check if other formats need this
+            utils.transpose_metadata(metadata, inplace=True)
 
     if any([kwargs.get(key, False) for key in
             ['metadata', 'get_metadata', 'return_metadata']]):
@@ -173,13 +180,31 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
         import nrrd  # pip install pynrrd
         if metadata is None:
             metadata = {}
+        else:
+            metadata = metadata.copy()
         if 'encoding' not in metadata:
             if compress:
                 metadata.update({'encoding': 'gzip'})
             else:
                 metadata.update({'encoding': 'raw'})
-        # Specify C-style ordering when writing zyx-ordered array using nrrd.write
-        # https://pynrrd.readthedocs.io/en/latest/user-guide.html#index-ordering
+        # From https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
+        # "C-order is the index order used in Python and many Python libraries
+        #  (e.g. NumPy, scikit-image, PIL, OpenCV). pynrrd recommends using
+        #  C-order indexing to be consistent with the Python community. However,
+        #  as of this time, the default indexing [in the nrrd.write command] is
+        #  Fortran-order to maintain backwards compatibility."
+        # "All header fields are specified in Fortran order, per the NRRD
+        #  specification, regardless of the index order. For example, a
+        #  C-ordered array with shape (60, 800, 600) would have a sizes field
+        #  of (600, 800, 60)."
+        #
+        # We expect users of this save function to pass in metadata that has
+        # header fields ordered in the same order as their data, so in addition
+        # to effectively flipping the order of the data's axes by specifying
+        # index_order='C' to the nrrd.write command below, we also need to flip
+        # the order of any per-axis metadata fields.
+
+        metadata = utils.flip_metadata_axes(metadata)
         nrrd.write(filename, data, header=metadata, index_order='C')
 
     if extension in ['raw', 'vol']:
