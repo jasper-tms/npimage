@@ -143,8 +143,8 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
     filename = str(filename)
     filename = filename.rstrip('/')
     if os.path.exists(filename) and not overwrite:
-        raise Exception(f'File {filename} already exists. '
-                        'Set overwrite=True to overwrite.')
+        raise FileExistsError(f'File {filename} already exists. '
+                              'Set overwrite=True to overwrite.')
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
@@ -241,8 +241,8 @@ def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
     if filename.split('.')[-1] not in ['mp4', 'mkv', 'avi', 'mov']:
         filename += '.mp4'
     if os.path.exists(filename) and not overwrite:
-        raise Exception(f'File {filename} already exists. '
-                        'Set overwrite=True to overwrite.')
+        raise FileExistsError(f'File {filename} already exists. '
+                              'Set overwrite=True to overwrite.')
     container = av.open(filename, mode='w')
 
     stream = container.add_stream('libx264', rate=framerate)
