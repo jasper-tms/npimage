@@ -81,4 +81,4 @@ if __name__ == '__main__':
                 args.append(arg)
         #print(f'args, {args}')
         #print(f'kwargs, {kwargs}')
-        func(*args, **kwargs)
+        print(func(*args, **kwargs))
