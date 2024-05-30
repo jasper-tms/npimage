@@ -187,6 +187,7 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
                 metadata.update({'encoding': 'gzip'})
             else:
                 metadata.update({'encoding': 'raw'})
+
         # From https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
         # "C-order is the index order used in Python and many Python libraries
         #  (e.g. NumPy, scikit-image, PIL, OpenCV). pynrrd recommends using
@@ -203,8 +204,7 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
         # to effectively flipping the order of the data's axes by specifying
         # index_order='C' to the nrrd.write command below, we also need to flip
         # the order of any per-axis metadata fields.
-
-        metadata = utils.flip_metadata_axes(metadata)
+        utils.transpose_metadata(metadata, inplace=True)
         nrrd.write(filename, data, header=metadata, index_order='C')
 
     if extension in ['raw', 'vol']:
