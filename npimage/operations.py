@@ -439,24 +439,3 @@ def remove_bleedthrough(im, contaminated_slice, source_slice,
     """
     #TODO implement ICA and use it to separate the two independent sources
     raise NotImplementedError
-
-
-def find_landmark(im1, landmark_bbox,
-                  im2, search_bbox=None,
-                  rotation_angles=[0]):
-    """
-    Given a region in a source image, find the region in the target
-      image that most resembles the source feature.
-    Specify search_bbox to restrict the search to a particular region
-      within the target image. Otherwise the whole image is searched.
-    By default rotation is not allowed, but specific rotation angles can
-      be searched by passing an iterable specifying rotations (in degrees)
-      to search, e.g.:
-       rotation_range=[-90, 0, 90]
-       rotation_range=np.arange(-10, 10.5, 0.5)
-       rotation_range=np.linspace(-10, 10, 5)
-
-    See also cv2.matchTemplate, e.g. https://docs.opencv.org/4.5.2/d4/dc6/tutorial_py_template_matching.html
-    """
-    #TODO implement
-    raise NotImplementedError

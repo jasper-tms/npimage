@@ -3,3 +3,4 @@ pillow
 tifffile
 pynrrd
 matplotlib
+opencv-python
