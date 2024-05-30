@@ -31,7 +31,7 @@ def load(filename, dim_order='zyx', **kwargs):
      xyz for 3D image volumes, xy for 1-channel 2D images, or
      xyc for multi-channel 2D images.
     """
-
+    filename = str(filename)
     while filename.endswith('/'):
         filename = filename[:-1]
     extension = filename.split('.')[-1]
@@ -133,6 +133,7 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
 
     `compress` only matters when saving in `.nrrd` format
     """
+    filename = str(filename)
     filename = filename.rstrip('/')
     if os.path.exists(filename) and not overwrite:
         raise Exception(f'File {filename} already exists. '
@@ -212,6 +213,8 @@ def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
         data = data.swapaxes(1, 2)
     n_frames = data.shape[0]
 
+    if filename.split('.')[-1] not in ['mp4', 'mkv', 'avi', 'mov']:
+        filename += '.mp4'
     if os.path.exists(filename) and not overwrite:
         raise Exception(f'File {filename} already exists. '
                         'Set overwrite=True to overwrite.')
