@@ -3,4 +3,4 @@ pillow
 tifffile
 pynrrd
 matplotlib
-opencv-python
+opencv-python-headless
