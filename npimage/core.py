@@ -126,7 +126,14 @@ read = load  # Function name alias
 imread = load  # Function name alias
 
 
-def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compress=False):
+def save(data,
+         filename,
+         overwrite=False,
+         dim_order='zyx',
+         pixel_size=None,
+         unit=None,
+         compress=False,
+         metadata=None):
     """
     Save a numpy array to file with a file type specified by the
     filename extension.
@@ -138,7 +145,8 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
      a 1-channel 2D image in xy order, or a multi-channel 2D image
      in xyc order.
 
-    `compress` only matters when saving in `.nrrd` format
+    Currently `pixel_size`, `unit`, and `compress` are only recognized
+    when saving to .nrrd files. For other formats, they are ignored.
     """
     filename = str(filename)
     filename = filename.rstrip('/')
@@ -182,11 +190,26 @@ def save(data, filename, overwrite=False, dim_order='zyx', metadata=None, compre
             metadata = {}
         else:
             metadata = metadata.copy()
+        if compress:
+            metadata.update({'encoding': 'gzip'})
         if 'encoding' not in metadata:
-            if compress:
-                metadata.update({'encoding': 'gzip'})
+            metadata.update({'encoding': 'raw'})
+        if pixel_size is not None:
+            try:
+                iter(pixel_size)
+            except TypeError:
+                pixel_size = [pixel_size] * data.ndim
+
+            if 'xy' in dim_order:
+                pixel_size = np.flip(pixel_size)
+            metadata.update({'space directions': np.flip(np.diag(pixel_size),
+                                                         axis=-1)})
+            if is_rgb_or_rgba(data):
+                metadata.update({'space dimension': data.ndim - 1})
             else:
-                metadata.update({'encoding': 'raw'})
+                metadata.update({'space dimension': data.ndim})
+        if unit is not None:
+            metadata.update({'space units': [unit] * data.ndim})
 
         # From https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
         # "C-order is the index order used in Python and many Python libraries
