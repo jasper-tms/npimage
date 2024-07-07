@@ -38,52 +38,74 @@ def to_16bit(image: np.ndarray, **kwargs) -> np.ndarray:
 
 
 def cast(image: np.ndarray,
-         output_dtype,
+         output_dtype: Union[str, np.dtype],
+         maximize_contrast=True,
          bottom_percentile=0.05,
          top_percentile=99.95,
          bottom_value=None,
          top_value=None) -> np.ndarray:
     """
-    Cast an image to a new dtype, while scaling the pixel values so that
-    values <= bottom_value are mapped to the minimum value representable in
-    the new dtype and values >= top_value are mapped to the maximum value
-    representable in the new dtype. Values within the range (bottom_value,
-    top_value) will be mapped linearly into the range of the new dtype between
-    the minimum and maximum values.
+    Cast an image to a new dtype.
 
-    Some examples for converting to uint8 (range 0-255):
-    - Set bottom_percentile=0 to map only the minimum value in the source image
-      to 0 and and top_percentile=100 to map only the maximum value in the
-      source image to 255, and all other values to the range [1, 254].
-    - Set bottom_percentile=25 to map all of the the lowest 25% of the source
-      image's pixel values to 0 and set top_percentile=75 to map all of the
-      highest 25% of the source image's pixel values to 255.
-    The defaults are:
+    If maximize_contrast is False, the image is simply clipped to the
+    range of the new dtype and cast to that dtype. In this case all
+    arguments after maximize_contrast are ignored.
+
+    If maximize_contrast is True, pixel values will be adjusted linearly to
+    fill the output_dtype's range. The default adjustment parameters of:
     - bottom_percentile=0.05
     - top_percentile=99.95
-    which are ~3.3 standard deviations below and above the mean, respectively,
-    if the pixel values are approximately normally distributed. (Compared to
-    using percentiles of 0 and 100, using these percentiles lessens the impact
-    of a few extreme outlier pixel values in the image.)
+    will stretch nearly the entire range of the source pixels to fill the
+    entire range of the output data type. (Compared to using percentiles
+    of 0 and 100, using these percentiles prevents a few extreme outlier
+    pixel values from causing a suboptimal contrast adjustment. These
+    percentages are are ~3.3 standard deviations below and above the mean,
+    respectively, if the pixel values are approximately normally distributed.)
 
-    You may however specify bottom_value and/or top_value explicitly yourself,
-    in which case bottom_percentile and/or top_percentile will be ignored.
+    bottom_value and top_value are determined by the bottom_percentile and
+    top_percentile arguments and the distribution of pixel values in the image.
+    However you may set bottom_value and/or top_value directly, in which case
+    the corresponding bottom and/or top percentile argument(s) will be ignored.
 
-    The steps taken (via a call to `adjust_brightness()`) are:
-    - Clip values less than bottom_value or greater than top_value
-      (i.e. replace them with bottom_value or top_value)
-    - Map the range [bottom_value, top_value] to the range
-      [just less than 1, just greater than 255]
-    - Cast to int (which rounds down)
-    From these steps, values will be transformed as follows:
+    Values in the starting image <= bottom_value are mapped to the minimum
+    value representable in the new dtype, and values >= top_value are mapped
+    to the maximum value representable in the new dtype. Values within the
+    range (bottom_value, top_value) will be mapped linearly into the range
+    of the new dtype between the minimum and maximum values. More specifically,
+    there is a linear remapping step followed by a rounding down step, which
+    produces the following two transformations for a number of example values
+    (during a cast to uint8; max target value would change for other dtypes):
     - bottom_value or less -> just less than 1 -> 0
     - a value just greater than bottom_value -> just greater than 1 -> 1
     - top_value or larger -> just greater than 255 -> 255
     - a value just less than top_value -> just less than 255 -> 254
     - values between bottom_value and top_value -> linearly mapped to
-      values between 1 and 254
+      values between 1 and 254 -> rounded down to the nearest integer.
+
+    Examples of behavior if you change bottom_percentile/top_percentile:
+    - Set bottom_percentile=0 to map only the minimum value in the source
+      image to 0 and and top_percentile=100 to map only the maximum value in
+      the source image to 255, and all other values to the range [1, 254].
+    - Set bottom_percentile=25 to map all of the the lowest 25% of the source
+      image's pixel values to 0 and set top_percentile=75 to map all of the
+      highest 25% of the source image's pixel values to 255, and values in
+      between the 25th and 75th percentiles to the range [1, 254].
     """
     assert isinstance(image, np.ndarray)
+
+    if np.issubdtype(output_dtype, np.integer):
+        info = np.iinfo(output_dtype)
+    elif np.issubdtype(output_dtype, np.floating):
+        info = np.finfo(output_dtype)
+    else:
+        raise TypeError(f'Unsupported dtype: {output_dtype}')
+
+    if not maximize_contrast:
+        return np.clip(
+            image,
+            info.min,
+            info.max
+        ).astype(output_dtype)
 
     if bottom_value is None or top_value is None:
         percentiles = np.percentile(image, [bottom_percentile, top_percentile])
@@ -95,19 +117,16 @@ def cast(image: np.ndarray,
         raise ZeroDivisionError('top_value and bottom_value are the same: '
                                 '{}'.format(top_value))
 
-    if output_dtype in ['uint8', np.uint8]:
-        target_range = (1 - 1e-12, 2**8 - 1 + 1e-12),
-    elif output_dtype in ['uint16', np.uint16]:
-        target_range = (1 - 1e-12, 2**16 - 1 + 1e-12),
-    elif output_dtype in ['uint32', np.uint32]:
-        target_range = (1 - 1e-12, 2**32 - 1 + 1e-12),
+    if np.issubdtype(output_dtype, np.integer):
+        target_range = (np.iinfo(output_dtype).min + 1 - 1e-5,
+                        np.iinfo(output_dtype).max + 1e-5)
     else:
-        raise NotImplementedError(
-            'Only uint8, uint16, and uint32 bit ranges are known. If you'
-            ' want to convert to a different bit-depth, add a line to this'
-            ' function to specify the target range for that bit-depth,'
-            ' or call adjust_brightness() directly with the target_range'
-            ' argument.')
+        raise ValueError(
+            '`maximize_contrast=True` only supports integer data types.'
+            ' You can cast to other dtypes while specifying how to'
+            ' adjust the pixel values to maintain contrast by calling'
+            ' `npimage.adjust_brightness()` with the target_range set'
+            ' to the range you want to map to.')
 
     return adjust_brightness(image,
                              (bottom_value, top_value),
@@ -126,8 +145,8 @@ def adjust_brightness(image: np.ndarray,
     thereby adjusting the brightness and contrast of the image.
 
     By including clip and output_dtype, this can be used to convert
-    image volumes to lower bit-depths, e.g. 8-bit. See `npimage.cast()`
-    for an example of how to do this.
+    image volumes to lower bit-depths, e.g. 8-bit.
+    See `npimage.cast()` for an example of how to do this.
 
     Parameters
     ----------
