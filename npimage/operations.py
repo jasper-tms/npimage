@@ -11,8 +11,7 @@ Function list:
 - overlay_two_images: Overlay two images with the second one offset.
 """
 
-from collections.abc import Iterable
-from typing import Literal
+from typing import Iterable, Literal, Union, Optional
 import gc
 
 import numpy as np
@@ -20,18 +19,39 @@ import numpy as np
 from .utils import iround, eq, isint
 
 
-def to_8bit(image: np.ndarray,
-            bottom_percentile=0.05,
-            top_percentile=99.95,
-            bottom_value=None,
-            top_value=None) -> np.ndarray:
+def to_8bit(image: np.ndarray, **kwargs) -> np.ndarray:
     """
-    Convert an image to 8-bit (uint8) by scaling the image's pixel values so
-    that values <= bottom_value are mapped to 0 and values >= top_value are
-    mapped to 255. Values within the range (bottom_value, top_value) will be
-    mapped linearly into the range [1, 254]. By default, bottom_value and
-    top_value are set to percentiles of the source image's pixel values.
-    Some examples:
+    Convert an image to 8-bit.
+
+    See `npimage.cast()` for full description of available arguments.
+    """
+    return cast(image, 'uint8', **kwargs)
+
+
+def to_16bit(image: np.ndarray, **kwargs) -> np.ndarray:
+    """
+    Convert an image to 16-bit.
+
+    See `npimage.cast()` for full description of available arguments.
+    """
+    return cast(image, 'uint16', **kwargs)
+
+
+def cast(image: np.ndarray,
+         output_dtype,
+         bottom_percentile=0.05,
+         top_percentile=99.95,
+         bottom_value=None,
+         top_value=None) -> np.ndarray:
+    """
+    Cast an image to a new dtype, while scaling the pixel values so that
+    values <= bottom_value are mapped to the minimum value representable in
+    the new dtype and values >= top_value are mapped to the maximum value
+    representable in the new dtype. Values within the range (bottom_value,
+    top_value) will be mapped linearly into the range of the new dtype between
+    the minimum and maximum values.
+
+    Some examples for converting to uint8 (range 0-255):
     - Set bottom_percentile=0 to map only the minimum value in the source image
       to 0 and and top_percentile=100 to map only the maximum value in the
       source image to 255, and all other values to the range [1, 254].
@@ -49,10 +69,10 @@ def to_8bit(image: np.ndarray,
     You may however specify bottom_value and/or top_value explicitly yourself,
     in which case bottom_percentile and/or top_percentile will be ignored.
 
-    Algorithm:
-    - Clip values < bottom_value or > top_value
+    The steps taken (via a call to `adjust_brightness()`) are:
+    - Clip values less than bottom_value or greater than top_value
       (i.e. replace them with bottom_value or top_value)
-    - Map the range [bottom_value, top_value] to
+    - Map the range [bottom_value, top_value] to the range
       [just less than 1, just greater than 255]
     - Cast to int (which rounds down)
     From these steps, values will be transformed as follows:
@@ -71,25 +91,80 @@ def to_8bit(image: np.ndarray,
         bottom_value = percentiles[0]
     if top_value is None:
         top_value = percentiles[1]
-
     if bottom_value == top_value:
         raise ZeroDivisionError('top_value and bottom_value are the same: '
                                 '{}'.format(top_value))
 
-    image = np.clip(image, bottom_value, top_value)
+    if output_dtype in ['uint8', np.uint8]:
+        target_range = (1 - 1e-12, 2**8 - 1 + 1e-12),
+    elif output_dtype in ['uint16', np.uint16]:
+        target_range = (1 - 1e-12, 2**16 - 1 + 1e-12),
+    elif output_dtype in ['uint32', np.uint32]:
+        target_range = (1 - 1e-12, 2**32 - 1 + 1e-12),
+    else:
+        raise NotImplementedError(
+            'Only uint8, uint16, and uint32 bit ranges are known. If you'
+            ' want to convert to a different bit-depth, add a line to this'
+            ' function to specify the target range for that bit-depth,'
+            ' or call adjust_brightness() directly with the target_range'
+            ' argument.')
 
-    bottom_target = 1 - 1e-12
-    top_target = 255 + 1e-12
-    # TODO some more clever implementation that doesn't require casting to
-    # float64, which can take up a lot of memory.
+    return adjust_brightness(image,
+                             (bottom_value, top_value),
+                             target_range,
+                             clip=True,
+                             output_dtype=output_dtype)
+
+
+def adjust_brightness(image: np.ndarray,
+                      starting_range: tuple[float, float],
+                      target_range: tuple[float, float],
+                      output_dtype: Optional[Union[str, np.dtype]] = None,
+                      clip: bool = False) -> np.ndarray:
+    """
+    Linearly map an image's pixel values from one range to another,
+    thereby adjusting the brightness and contrast of the image.
+
+    By including clip and output_dtype, this can be used to convert
+    image volumes to lower bit-depths, e.g. 8-bit. See `npimage.cast()`
+    for an example of how to do this.
+
+    Parameters
+    ----------
+    image : np.ndarray
+      The image to adjust.
+
+    starting_range : tuple of 2 float
+      The range of pixel values in the input image. Values outside
+      this range will be clipped if clip=True.
+
+    target_range : tuple of float
+      The range of pixel values to adjust the starting_range to.
+      If not provided, output_dtype must be provided instead.
+
+    """
+    if target_range is None and output_dtype is None:
+        raise ValueError('Must provide either target_range or output_dtype')
+
+    if output_dtype is None:
+        output_dtype = image.dtype
+
+    if clip:
+        image = np.clip(image, *starting_range)
+
+    bottom_value, top_value = starting_range
+    bottom_target, top_target = target_range
+
+    # TODO write a more clever implementation that doesn't require casting
+    # to float64, which can take up a lot of memory for large arrays.
     return ((image.astype('float64') - bottom_value)
             / (top_value - bottom_value)
             * (top_target - bottom_target)
-            + bottom_target).astype('uint8')
+            + bottom_target).astype(output_dtype)
 
 
 def downsample(image: np.ndarray,
-               factor: [int, Iterable] = 2,
+               factor: Union[int, Iterable[int]] = 2,
                keep_input_dtype=True) -> np.ndarray:
     """
     Downsample an image by a given factor along each axis.
@@ -99,7 +174,7 @@ def downsample(image: np.ndarray,
     image : np.ndarray
         The image to downsample.
 
-    factor : int or Iterable
+    factor : int or iterable of ints
         An iterable with length matching the number of axes in the image,
         specifying a downsampling factor along each axis.
         If factor is provided as an int, that int will be used for each axis.
@@ -162,7 +237,7 @@ def downsample(image: np.ndarray,
 
 
 def offset(image: np.ndarray,
-           distance: float or Iterable[float],
+           distance: Union[float, Iterable[float]],
            axis: int = None,
            expand_bounds: bool = False,
            edge_mode: Literal['extend', 'wrap',
@@ -294,9 +369,9 @@ def _offset_subpixel(image: np.ndarray,
         # Adding 127 before dividing by 256 means we round to the nearest
         # integer instead of truncating (which we'd get without the 127)
         image_subpix_shifted = (
-            (image_upcast * image_weight) +
-            (image_1pix_shifted_upcast * image_1pix_shifted_weight) +
-            127
+            (image_upcast * image_weight)
+            + (image_1pix_shifted_upcast * image_1pix_shifted_weight)
+            + 127
         ) // 256
         del image_upcast, image_1pix_shifted_upcast, image_1pix_shifted
         gc.collect()
