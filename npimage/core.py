@@ -19,8 +19,9 @@ from . import utils
 
 supported_extensions = [
     'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
-    'nrrd', 'zarr', 'raw', 'vol'
+    'nrrd', 'zarr', 'raw', 'vol', 'ng'
 ]
+
 
 def load(filename, dim_order='zyx', **kwargs):
     """
@@ -146,7 +147,7 @@ def save(data,
      in xyc order.
 
     Currently `pixel_size`, `unit`, and `compress` are only recognized
-    when saving to .nrrd files. For other formats, they are ignored.
+    when saving to .nrrd and .ng files, and ignored otherwise.
     """
     filename = str(filename)
     filename = filename.rstrip('/')
@@ -235,6 +236,54 @@ def save(data,
 
     if extension == 'zarr':
         raise NotImplementedError
+
+    if extension == 'ng':
+        from cloudvolume import CloudVolume
+
+        # CloudVolume expects data in Fortran order
+        if is_rgb_or_rgba(data):
+            data = data.swapaxes(0, 1)
+        else:
+            data = data.T
+
+        resolution = 1
+        if pixel_size is not None:
+            resolution = pixel_size
+        try:
+            iter(resolution)
+        except TypeError:
+            resolution = [resolution] * data.ndim
+        if compress is True or compress == 'lossy':
+            encoding = 'jpeg'
+            gzip = True
+        elif compress == 'lossless':
+            encoding = 'raw',
+            gzip = True
+        elif compress is False:
+            encoding = 'raw'
+            gzip = False
+        else:
+            raise ValueError('For .ng format, compress must be True, False,'
+                             f' "lossy", or "lossless" but was {compress}')
+
+        info = CloudVolume.create_new_info(
+            num_channels=1,
+            layer_type='image',
+            data_type=data.dtype,
+            encoding=encoding,
+            resolution=resolution,
+            voxel_offset=[0, 0, 0],
+            chunk_size=[64, 64, 64],
+            volume_size=data.shape
+        )
+
+        if not any(filename.startswith(prefix)
+                   for prefix in ['file://', 'gs://', 's3://']):
+            filename = 'file://' + filename
+        vol = CloudVolume(filename, info=info, compress=gzip)
+        vol.commit_info()
+
+        vol[:] = data
 
 
 write = save  # Function name alias
