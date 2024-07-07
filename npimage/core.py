@@ -133,7 +133,7 @@ def save(data,
          dim_order='zyx',
          pixel_size=None,
          unit=None,
-         compress=False,
+         compress=None,
          metadata=None):
     """
     Save a numpy array to file with a file type specified by the
@@ -191,9 +191,9 @@ def save(data,
             metadata = {}
         else:
             metadata = metadata.copy()
-        if compress:
+        if compress is True:
             metadata.update({'encoding': 'gzip'})
-        if 'encoding' not in metadata:
+        if compress is False or 'encoding' not in metadata:
             metadata.update({'encoding': 'raw'})
         if pixel_size is not None:
             try:
@@ -259,7 +259,7 @@ def save(data,
         elif compress == 'lossless':
             encoding = 'raw',
             gzip = True
-        elif compress is False:
+        elif compress is False or compress is None:
             encoding = 'raw'
             gzip = False
         else:
