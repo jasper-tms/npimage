@@ -36,8 +36,16 @@ def load(filename, dim_order='zyx', **kwargs):
     filename = str(filename)
     while filename.endswith('/'):
         filename = filename[:-1]
-    extension = filename.split('.')[-1]
-    assert extension in supported_extensions, f'Filetype {extension} not supported'
+    if 'format' in kwargs:
+        extension = kwargs['format'].lower()
+    elif '.' in filename:
+        extension = filename.split('.')[-1].lower()
+    else:
+        raise ValueError('Could not determine file format from filename'
+                         f' "{filename}". Please specify the file type via'
+                         ' the `format` argument, e.g. format="tif"')
+    if extension not in supported_extensions:
+        raise ValueError(f'File format "{extension}" not supported/recognized.')
 
     data = None
 
