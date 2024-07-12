@@ -157,7 +157,7 @@ def save(data,
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
-    if compress and extension != 'nrrd':
+    if compress and extension not in ['nrrd', 'ng']:
         print('WARNING: compress argument is ignored because not saving as '
               '.nrrd. Whether or not compression occurs now will depend on '
               'the format you are saving to.')
