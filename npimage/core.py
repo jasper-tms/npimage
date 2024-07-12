@@ -19,8 +19,9 @@ from . import utils
 
 supported_extensions = [
     'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
-    'nrrd', 'zarr', 'raw', 'vol'
+    'nrrd', 'zarr', 'raw', 'vol', 'ng'
 ]
+
 
 def load(filename, dim_order='zyx', **kwargs):
     """
@@ -139,8 +140,8 @@ def save(data,
          overwrite=False,
          dim_order='zyx',
          pixel_size=None,
-         unit=None,
-         compress=False,
+         units=None,
+         compress=None,
          metadata=None):
     """
     Save a numpy array to file with a file type specified by the
@@ -153,8 +154,8 @@ def save(data,
      a 1-channel 2D image in xy order, or a multi-channel 2D image
      in xyc order.
 
-    Currently `pixel_size`, `unit`, and `compress` are only recognized
-    when saving to .nrrd files. For other formats, they are ignored.
+    Currently `pixel_size`, `units`, and `compress` are only recognized
+    when saving to .nrrd and .ng files, and ignored otherwise.
     """
     filename = str(filename)
     filename = filename.rstrip('/')
@@ -164,7 +165,7 @@ def save(data,
     extension = filename.split('.')[-1]
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
-    if compress and extension != 'nrrd':
+    if compress and extension not in ['nrrd', 'ng']:
         print('WARNING: compress argument is ignored because not saving as '
               '.nrrd. Whether or not compression occurs now will depend on '
               'the format you are saving to.')
@@ -198,9 +199,9 @@ def save(data,
             metadata = {}
         else:
             metadata = metadata.copy()
-        if compress:
+        if compress is True:
             metadata.update({'encoding': 'gzip'})
-        if 'encoding' not in metadata:
+        if compress is False or 'encoding' not in metadata:
             metadata.update({'encoding': 'raw'})
         if pixel_size is not None:
             try:
@@ -216,8 +217,8 @@ def save(data,
                 metadata.update({'space dimension': data.ndim - 1})
             else:
                 metadata.update({'space dimension': data.ndim})
-        if unit is not None:
-            metadata.update({'space units': [unit] * data.ndim})
+        if units is not None:
+            metadata.update({'space units': [units] * data.ndim})
 
         # From https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
         # "C-order is the index order used in Python and many Python libraries
@@ -243,6 +244,54 @@ def save(data,
 
     if extension == 'zarr':
         raise NotImplementedError
+
+    if extension == 'ng':
+        from cloudvolume import CloudVolume
+
+        # CloudVolume expects data in Fortran order
+        if is_rgb_or_rgba(data):
+            data = data.swapaxes(0, 1)
+        else:
+            data = data.T
+
+        resolution = 1
+        if pixel_size is not None:
+            resolution = pixel_size
+        try:
+            iter(resolution)
+        except TypeError:
+            resolution = [resolution] * data.ndim
+        if compress is True or compress == 'lossy':
+            encoding = 'jpeg'
+            gzip = True
+        elif compress == 'lossless':
+            encoding = 'raw',
+            gzip = True
+        elif compress is False or compress is None:
+            encoding = 'raw'
+            gzip = False
+        else:
+            raise ValueError('For .ng format, compress must be True, False,'
+                             f' "lossy", or "lossless" but was {compress}')
+
+        info = CloudVolume.create_new_info(
+            num_channels=1,
+            layer_type='image',
+            data_type=data.dtype,
+            encoding=encoding,
+            resolution=resolution,
+            voxel_offset=[0, 0, 0],
+            chunk_size=[64, 64, 64],
+            volume_size=data.shape
+        )
+
+        if not any(filename.startswith(prefix)
+                   for prefix in ['file://', 'gs://', 's3://']):
+            filename = 'file://' + filename
+        vol = CloudVolume(filename, info=info, compress=gzip)
+        vol.commit_info()
+
+        vol[:] = data
 
 
 write = save  # Function name alias

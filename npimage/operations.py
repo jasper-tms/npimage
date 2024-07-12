@@ -11,8 +11,7 @@ Function list:
 - overlay_two_images: Overlay two images with the second one offset.
 """
 
-from collections.abc import Iterable
-from typing import Literal
+from typing import Iterable, Literal, Union, Optional
 import gc
 
 import numpy as np
@@ -20,50 +19,93 @@ import numpy as np
 from .utils import iround, eq, isint
 
 
-def to_8bit(image: np.ndarray,
-            bottom_percentile=0.05,
-            top_percentile=99.95,
-            bottom_value=None,
-            top_value=None) -> np.ndarray:
+def to_8bit(image: np.ndarray, **kwargs) -> np.ndarray:
     """
-    Convert an image to 8-bit (uint8) by scaling the image's pixel values so
-    that values <= bottom_value are mapped to 0 and values >= top_value are
-    mapped to 255. Values within the range (bottom_value, top_value) will be
-    mapped linearly into the range [1, 254]. By default, bottom_value and
-    top_value are set to percentiles of the source image's pixel values.
-    Some examples:
-    - Set bottom_percentile=0 to map only the minimum value in the source image
-      to 0 and and top_percentile=100 to map only the maximum value in the
-      source image to 255, and all other values to the range [1, 254].
-    - Set bottom_percentile=25 to map all of the the lowest 25% of the source
-      image's pixel values to 0 and set top_percentile=75 to map all of the
-      highest 25% of the source image's pixel values to 255.
-    The defaults are:
+    Convert an image to 8-bit.
+
+    See `npimage.cast()` for full description of available arguments.
+    """
+    return cast(image, 'uint8', **kwargs)
+
+
+def to_16bit(image: np.ndarray, **kwargs) -> np.ndarray:
+    """
+    Convert an image to 16-bit.
+
+    See `npimage.cast()` for full description of available arguments.
+    """
+    return cast(image, 'uint16', **kwargs)
+
+
+def cast(image: np.ndarray,
+         output_dtype: Union[str, np.dtype],
+         maximize_contrast=True,
+         bottom_percentile=0.05,
+         top_percentile=99.95,
+         bottom_value=None,
+         top_value=None) -> np.ndarray:
+    """
+    Cast an image to a new dtype.
+
+    If maximize_contrast is False, the image is simply clipped to the
+    range of the new dtype and cast to that dtype. In this case all
+    arguments after maximize_contrast are ignored.
+
+    If maximize_contrast is True, pixel values will be adjusted linearly to
+    fill the output_dtype's range. The default adjustment parameters of:
     - bottom_percentile=0.05
     - top_percentile=99.95
-    which are ~3.3 standard deviations below and above the mean, respectively,
-    if the pixel values are approximately normally distributed. (Compared to
-    using percentiles of 0 and 100, using these percentiles lessens the impact
-    of a few extreme outlier pixel values in the image.)
+    will stretch nearly the entire range of the source pixels to fill the
+    entire range of the output data type. (Compared to using percentiles
+    of 0 and 100, using these percentiles prevents a few extreme outlier
+    pixel values from causing a suboptimal contrast adjustment. These
+    percentages are are ~3.3 standard deviations below and above the mean,
+    respectively, if the pixel values are approximately normally distributed.)
 
-    You may however specify bottom_value and/or top_value explicitly yourself,
-    in which case bottom_percentile and/or top_percentile will be ignored.
+    bottom_value and top_value are determined by the bottom_percentile and
+    top_percentile arguments and the distribution of pixel values in the image.
+    However you may set bottom_value and/or top_value directly, in which case
+    the corresponding bottom and/or top percentile argument(s) will be ignored.
 
-    Algorithm:
-    - Clip values < bottom_value or > top_value
-      (i.e. replace them with bottom_value or top_value)
-    - Map the range [bottom_value, top_value] to
-      [just less than 1, just greater than 255]
-    - Cast to int (which rounds down)
-    From these steps, values will be transformed as follows:
+    Values in the starting image <= bottom_value are mapped to the minimum
+    value representable in the new dtype, and values >= top_value are mapped
+    to the maximum value representable in the new dtype. Values within the
+    range (bottom_value, top_value) will be mapped linearly into the range
+    of the new dtype between the minimum and maximum values. More specifically,
+    there is a linear remapping step followed by a rounding down step, which
+    produces the following two transformations for a number of example values
+    (during a cast to uint8; max target value would change for other dtypes):
     - bottom_value or less -> just less than 1 -> 0
     - a value just greater than bottom_value -> just greater than 1 -> 1
     - top_value or larger -> just greater than 255 -> 255
     - a value just less than top_value -> just less than 255 -> 254
     - values between bottom_value and top_value -> linearly mapped to
-      values between 1 and 254
+      values between 1 and 254 -> rounded down to the nearest integer.
+
+    Examples of behavior if you change bottom_percentile/top_percentile:
+    - Set bottom_percentile=0 to map only the minimum value in the source
+      image to 0 and and top_percentile=100 to map only the maximum value in
+      the source image to 255, and all other values to the range [1, 254].
+    - Set bottom_percentile=25 to map all of the the lowest 25% of the source
+      image's pixel values to 0 and set top_percentile=75 to map all of the
+      highest 25% of the source image's pixel values to 255, and values in
+      between the 25th and 75th percentiles to the range [1, 254].
     """
     assert isinstance(image, np.ndarray)
+
+    if np.issubdtype(output_dtype, np.integer):
+        info = np.iinfo(output_dtype)
+    elif np.issubdtype(output_dtype, np.floating):
+        info = np.finfo(output_dtype)
+    else:
+        raise TypeError(f'Unsupported dtype: {output_dtype}')
+
+    if not maximize_contrast:
+        return np.clip(
+            image,
+            info.min,
+            info.max
+        ).astype(output_dtype)
 
     if bottom_value is None or top_value is None:
         percentiles = np.percentile(image, [bottom_percentile, top_percentile])
@@ -71,25 +113,77 @@ def to_8bit(image: np.ndarray,
         bottom_value = percentiles[0]
     if top_value is None:
         top_value = percentiles[1]
-
     if bottom_value == top_value:
         raise ZeroDivisionError('top_value and bottom_value are the same: '
                                 '{}'.format(top_value))
 
-    image = np.clip(image, bottom_value, top_value)
+    if np.issubdtype(output_dtype, np.integer):
+        target_range = (np.iinfo(output_dtype).min + 1 - 1e-5,
+                        np.iinfo(output_dtype).max + 1e-5)
+    else:
+        raise ValueError(
+            '`maximize_contrast=True` only supports integer data types.'
+            ' You can cast to other dtypes while specifying how to'
+            ' adjust the pixel values to maintain contrast by calling'
+            ' `npimage.adjust_brightness()` with the target_range set'
+            ' to the range you want to map to.')
 
-    bottom_target = 1 - 1e-12
-    top_target = 255 + 1e-12
-    # TODO some more clever implementation that doesn't require casting to
-    # float64, which can take up a lot of memory.
+    return adjust_brightness(image,
+                             (bottom_value, top_value),
+                             target_range,
+                             clip=True,
+                             output_dtype=output_dtype)
+
+
+def adjust_brightness(image: np.ndarray,
+                      starting_range: tuple[float, float],
+                      target_range: tuple[float, float],
+                      output_dtype: Optional[Union[str, np.dtype]] = None,
+                      clip: bool = False) -> np.ndarray:
+    """
+    Linearly map an image's pixel values from one range to another,
+    thereby adjusting the brightness and contrast of the image.
+
+    By including clip and output_dtype, this can be used to convert
+    image volumes to lower bit-depths, e.g. 8-bit.
+    See `npimage.cast()` for an example of how to do this.
+
+    Parameters
+    ----------
+    image : np.ndarray
+      The image to adjust.
+
+    starting_range : tuple of 2 float
+      The range of pixel values in the input image. Values outside
+      this range will be clipped if clip=True.
+
+    target_range : tuple of float
+      The range of pixel values to adjust the starting_range to.
+      If not provided, output_dtype must be provided instead.
+
+    """
+    if target_range is None and output_dtype is None:
+        raise ValueError('Must provide either target_range or output_dtype')
+
+    if output_dtype is None:
+        output_dtype = image.dtype
+
+    if clip:
+        image = np.clip(image, *starting_range)
+
+    bottom_value, top_value = starting_range
+    bottom_target, top_target = target_range
+
+    # TODO write a more clever implementation that doesn't require casting
+    # to float64, which can take up a lot of memory for large arrays.
     return ((image.astype('float64') - bottom_value)
             / (top_value - bottom_value)
             * (top_target - bottom_target)
-            + bottom_target).astype('uint8')
+            + bottom_target).astype(output_dtype)
 
 
 def downsample(image: np.ndarray,
-               factor: [int, Iterable] = 2,
+               factor: Union[int, Iterable[int]] = 2,
                keep_input_dtype=True) -> np.ndarray:
     """
     Downsample an image by a given factor along each axis.
@@ -99,7 +193,7 @@ def downsample(image: np.ndarray,
     image : np.ndarray
         The image to downsample.
 
-    factor : int or Iterable
+    factor : int or iterable of ints
         An iterable with length matching the number of axes in the image,
         specifying a downsampling factor along each axis.
         If factor is provided as an int, that int will be used for each axis.
@@ -162,7 +256,7 @@ def downsample(image: np.ndarray,
 
 
 def offset(image: np.ndarray,
-           distance: float or Iterable[float],
+           distance: Union[float, Iterable[float]],
            axis: int = None,
            expand_bounds: bool = False,
            edge_mode: Literal['extend', 'wrap',
@@ -294,9 +388,9 @@ def _offset_subpixel(image: np.ndarray,
         # Adding 127 before dividing by 256 means we round to the nearest
         # integer instead of truncating (which we'd get without the 127)
         image_subpix_shifted = (
-            (image_upcast * image_weight) +
-            (image_1pix_shifted_upcast * image_1pix_shifted_weight) +
-            127
+            (image_upcast * image_weight)
+            + (image_1pix_shifted_upcast * image_1pix_shifted_weight)
+            + 127
         ) // 256
         del image_upcast, image_1pix_shifted_upcast, image_1pix_shifted
         gc.collect()
