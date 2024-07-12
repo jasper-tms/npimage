@@ -132,7 +132,7 @@ def save(data,
          overwrite=False,
          dim_order='zyx',
          pixel_size=None,
-         unit=None,
+         units=None,
          compress=None,
          metadata=None):
     """
@@ -146,7 +146,7 @@ def save(data,
      a 1-channel 2D image in xy order, or a multi-channel 2D image
      in xyc order.
 
-    Currently `pixel_size`, `unit`, and `compress` are only recognized
+    Currently `pixel_size`, `units`, and `compress` are only recognized
     when saving to .nrrd and .ng files, and ignored otherwise.
     """
     filename = str(filename)
@@ -209,8 +209,8 @@ def save(data,
                 metadata.update({'space dimension': data.ndim - 1})
             else:
                 metadata.update({'space dimension': data.ndim})
-        if unit is not None:
-            metadata.update({'space units': [unit] * data.ndim})
+        if units is not None:
+            metadata.update({'space units': [units] * data.ndim})
 
         # From https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
         # "C-order is the index order used in Python and many Python libraries
