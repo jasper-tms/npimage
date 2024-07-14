@@ -213,6 +213,10 @@ def save(data,
                 pixel_size = np.flip(pixel_size)
             metadata.update({'space directions': np.flip(np.diag(pixel_size),
                                                          axis=-1)})
+        if 'space dimension' not in metadata and 'space' not in metadata:
+            # If the number of spatial dimensions is not specified, assume
+            # it's the number of dimensions in the data array, minus the
+            # channel axis if it's present.
             if is_rgb_or_rgba(data):
                 metadata.update({'space dimension': data.ndim - 1})
             else:
