@@ -11,7 +11,7 @@ Function list:
 - overlay_two_images: Overlay two images with the second one offset.
 """
 
-from typing import Iterable, Literal, Union, Optional
+from typing import Iterable, Literal, Union, Optional, Tuple
 import gc
 
 import numpy as np
@@ -136,8 +136,8 @@ def cast(image: np.ndarray,
 
 
 def adjust_brightness(image: np.ndarray,
-                      starting_range: tuple[float, float],
-                      target_range: tuple[float, float],
+                      starting_range: Tuple[float, float],
+                      target_range: Tuple[float, float],
                       output_dtype: Optional[Union[str, np.dtype]] = None,
                       clip: bool = False) -> np.ndarray:
     """
@@ -437,7 +437,7 @@ def paste(image: np.ndarray,
 
 
 def overlay(ims: list[np.ndarray],
-            offsets: list[tuple[float]],
+            offsets: list[Tuple[float]],
             later_images_on_top=True,
             expand_bounds=False,
             fill_value=0):
