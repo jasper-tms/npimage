@@ -11,7 +11,7 @@ Function list:
 - overlay_two_images: Overlay two images with the second one offset.
 """
 
-from typing import Iterable, Literal, Union, Optional, Tuple
+from typing import Iterable, Literal, Union, Optional, Tuple, List
 import gc
 
 import numpy as np
@@ -436,8 +436,8 @@ def paste(image: np.ndarray,
     target[tuple(target_range)] = image[tuple(source_range)]
 
 
-def overlay(ims: list[np.ndarray],
-            offsets: list[Tuple[float]],
+def overlay(ims: List[np.ndarray],
+            offsets: List[Tuple[float]],
             later_images_on_top=True,
             expand_bounds=False,
             fill_value=0):
