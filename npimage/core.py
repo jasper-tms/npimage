@@ -251,6 +251,7 @@ def save(data,
 
     if extension == 'ng':
         from cloudvolume import CloudVolume
+        from cloudvolume.exceptions import InfoUnavailableError
 
         # CloudVolume expects data in Fortran order
         if is_rgb_or_rgba(data):
@@ -265,35 +266,46 @@ def save(data,
             iter(resolution)
         except TypeError:
             resolution = [resolution] * data.ndim
-        if compress is True or compress == 'lossy':
+        if compress is True or compress in ['lossy', 'jpeg', 'jpg']:
             encoding = 'jpeg'
+            gzip = False
+        elif compress is None or compress in ['lossless', 'gzip']:
+            if compress is None:
+                print('Using gzip compression by default for .ng format.')
+            encoding = 'raw'
             gzip = True
-        elif compress == 'lossless':
-            encoding = 'raw',
-            gzip = True
-        elif compress is False or compress is None:
+        elif compress is False:
             encoding = 'raw'
             gzip = False
         else:
-            raise ValueError('For .ng format, compress must be True, False,'
-                             f' "lossy", or "lossless" but was {compress}')
-
-        info = CloudVolume.create_new_info(
-            num_channels=1,
-            layer_type='image',
-            data_type=data.dtype,
-            encoding=encoding,
-            resolution=resolution,
-            voxel_offset=[0, 0, 0],
-            chunk_size=[64, 64, 64],
-            volume_size=data.shape
-        )
+            raise ValueError('For .ng format, compress must be '
+                             'True/"lossy"/"jpeg"/"jpg", "lossless"/"gzip",'
+                             f' or False, but was "{compress}"')
 
         if not any(filename.startswith(prefix)
                    for prefix in ['file://', 'gs://', 's3://']):
             filename = 'file://' + filename
-        vol = CloudVolume(filename, info=info, compress=gzip)
-        vol.commit_info()
+
+        try:
+            vol = CloudVolume(filename, compress=gzip)
+            if (vol.shape[:data.ndim] != data.shape
+                    or any(s != 1 for s in vol.shape[data.ndim:])):
+                raise ValueError('Dataset already exists at the specified path,'
+                                 ' but its shape does not match the given data.')
+        except InfoUnavailableError:
+            info = CloudVolume.create_new_info(
+                num_channels=1,
+                layer_type='image',
+                data_type=data.dtype,
+                encoding=encoding,
+                resolution=resolution,
+                voxel_offset=[0, 0, 0],
+                chunk_size=[64, 64, 64],
+                volume_size=data.shape
+            )
+
+            vol = CloudVolume(filename, info=info, compress=gzip)
+            vol.commit_info()
 
         vol[:] = data
 
