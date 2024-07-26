@@ -200,11 +200,19 @@ def save(data,
             metadata = {}
         else:
             metadata = metadata.copy()
+        custom_field_map = {}
+
         if compress is True:
             metadata.update({'encoding': 'gzip'})
         if compress is False or 'encoding' not in metadata:
             metadata.update({'encoding': 'raw'})
+
+        if isinstance('space directions', str):
+            custom_field_map['space directions'] = 'string'
         if pixel_size is not None:
+            if 'space directions' in metadata:
+                raise ValueError('Cannot specify both "space directions" in'
+                                 ' metadata and "pixel_size" as an argument.')
             try:
                 iter(pixel_size)
             except TypeError:
@@ -223,7 +231,13 @@ def save(data,
             else:
                 metadata.update({'space dimension': data.ndim})
         if units is not None:
-            metadata.update({'space units': [units] * data.ndim})
+            if hasattr(units, '__iter__') and not isinstance(units, str):
+                units = list(units)
+            elif 'space dimension' in metadata:
+                units = [units] * metadata['space dimension']
+            else:
+                units = [units] * data.ndim
+            metadata.update({'space units': units})
 
         # From https://pynrrd.readthedocs.io/en/stable/background/index-ordering.html
         # "C-order is the index order used in Python and many Python libraries
@@ -245,6 +259,7 @@ def save(data,
         nrrd.write(filename,
                    data,
                    header=metadata,
+                   custom_field_map=custom_field_map,
                    compression_level=compression_level,
                    index_order='C')
 
