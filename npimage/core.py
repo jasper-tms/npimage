@@ -109,7 +109,7 @@ def load(filename, dim_order='zyx', **kwargs):
             data = zarr.open(TODO) #TODO check zyx/xyz order
 
     if 'xy' in dim_order:
-        if is_rgb_or_rgba(data):
+        if has_channel_axis(data):
             # Can't just transpose because if data is a multi-channel 2D
             # image, need the channel axis to stay as the last axis.
             data = data.swapaxes(0, 1)
@@ -171,7 +171,7 @@ def save(data,
               'the format you are saving to.')
 
     if 'xy' in dim_order:
-        if is_rgb_or_rgba(data):
+        if has_channel_axis(data):
             # Can't just transpose because if data is a multi-channel 2D
             # image, need the channel axis to stay as the last axis.
             data = data.swapaxes(0, 1)
@@ -215,9 +215,9 @@ def save(data,
                                                          axis=-1)})
         if 'space dimension' not in metadata and 'space' not in metadata:
             # If the number of spatial dimensions is not specified, assume
-            # it's the number of dimensions in the data array, minus the
-            # channel axis if it's present.
-            if is_rgb_or_rgba(data):
+            # it's the number of dimensions in the data array, minus 1 if
+            # a channel axis is present.
+            if has_channel_axis(data):
                 metadata.update({'space dimension': data.ndim - 1})
             else:
                 metadata.update({'space dimension': data.ndim})
@@ -254,7 +254,7 @@ def save(data,
         from cloudvolume.exceptions import InfoUnavailableError
 
         # CloudVolume expects data in Fortran order
-        if is_rgb_or_rgba(data):
+        if has_channel_axis(data):
             data = data.swapaxes(0, 1)
         else:
             data = data.T
@@ -381,10 +381,10 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
         if os.path.exists(data):
             data = load(data)
 
-    if not is_rgb_or_rgba(data) and data.ndim != 2:
-        m = ('Input array must have shape (y, x) for grayscale, '
-            '(y, x, 3) for RGB, or (y, x, 4) for RGBA but had '
-            f'shape {data.shape}')
+    if (not data.ndim == 2) and not (data.ndim == 3 and has_channel_axis(data)):
+        m = ('Data must have shape (y, x) for grayscale, '
+             '(y, x, 3) for RGB, or (y, x, 4) for RGBA but had '
+             f'shape {data.shape}')
         if 'xy' in dim_order:
             m = m.replace('y, x', 'x, y')
         raise ValueError(m)
@@ -414,16 +414,30 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
 imshow = show  # Function name alias
 
 
-def is_rgb_or_rgba(data):
+def has_channel_axis(data, expected_channel_axis=[0, -1]):
     """
-    Return True if the given numpy array has a shape indicating
-    that it's either an RGB or RGBA image.
+    Return True if the given numpy array has a shape suggesting
+    that it has a channel (color) axis, that is, an axis with length
+    2 (2-color), 3 (RGB), or 4 (RGBA).
 
-    data.shape == (i, j, 3)  ->  it's RGB, return True
-    data.shape == (i, j, 4)  ->  it's RGBA, return True
-    data.shape == anything else -> return False
+    Parameters
+    ----------
+    data : numpy.ndarray
+        The numpy array to check for a channel axis.
 
+    expected_channel_axis : int or list of int, default [0, -1]
+        If None, any axis having length 2, 3, or 4 will be considered
+        a channel axis.
+        If an int, only that axis index will be checked.
+        If a list of ints, all axes with those indices will be checked.
+        The default value of [0, -1] checks the first and last axes, which is
+        almost always where a channel axis will be found.
     """
-    if data.ndim == 3 and data.shape[2] in [3, 4]:
-        return True
+    if isinstance(expected_channel_axis, int):
+        expected_channel_axis = [expected_channel_axis]
+    if expected_channel_axis is None:
+        expected_channel_axis = range(data.ndim)
+    for axis in expected_channel_axis:
+        if data.shape[axis] in [2, 3, 4]:
+            return True
     return False
