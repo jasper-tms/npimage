@@ -11,7 +11,8 @@ import npimage
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print('Usage: {} image_filename(s) output_datatype'.format(sys.argv[0]))
+        print('Usage: npim_cast image_filename(s) output_datatype'
+              ' [-m|--maximize-contrast] [-d|--delete-original]')
         sys.exit(1)
 
     filenames = []
@@ -21,15 +22,20 @@ if __name__ == '__main__':
     for arg in sys.argv[1:]:
         if os.path.isfile(arg):
             filenames.append(arg)
-        elif arg.lower() == '-m':
+        elif arg.lower() in ('-m', '--maximize-contrast'):
             maximize_contrast = True
-        elif arg.lower() == '-d':
+        elif arg.lower() in ('-d', '--delete-original'):
             delete_original = True
         elif output_dtype is not None:
-            raise RuntimeError("Expected only one argument that isn't a filename"
-                               f' or -m but got both {output_dtype} and {arg}')
+            raise RuntimeError(
+                'Arguments must be filenames, -m, -d, or the data type to cast'
+                f' to, but got both {output_dtype} and {arg}'
+            )
         else:
             output_dtype = arg
+
+    if output_dtype is None:
+        raise RuntimeError('No output data type specified')
 
     for filename in filenames:
         print(f'Converting {filename} to {output_dtype}')
