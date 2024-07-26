@@ -142,6 +142,7 @@ def save(data,
          pixel_size=None,
          units=None,
          compress=None,
+         compression_level=3,
          metadata=None):
     """
     Save a numpy array to file with a file type specified by the
@@ -241,7 +242,11 @@ def save(data,
         # index_order='C' to the nrrd.write command below, we also need to flip
         # the order of any per-axis metadata fields.
         utils.transpose_metadata(metadata, inplace=True)
-        nrrd.write(filename, data, header=metadata, index_order='C')
+        nrrd.write(filename,
+                   data,
+                   header=metadata,
+                   compression_level=compression_level,
+                   index_order='C')
 
     if extension in ['raw', 'vol']:
         raise NotImplementedError
