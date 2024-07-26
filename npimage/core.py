@@ -207,7 +207,7 @@ def save(data,
         if compress is False or 'encoding' not in metadata:
             metadata.update({'encoding': 'raw'})
 
-        if isinstance('space directions', str):
+        if isinstance(metadata.get('space directions', None), str):
             custom_field_map['space directions'] = 'string'
         if pixel_size is not None:
             if 'space directions' in metadata:
