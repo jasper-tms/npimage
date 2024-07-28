@@ -68,10 +68,17 @@ def transpose_metadata(metadata: dict or OrderedDict,
     Designed to work with OrderedDicts that contain nrrd files'
     metadata, but may be useful for metadata from other formats.
     """
+    if metadata is None:
+        return None
     if not inplace:
         metadata = metadata.copy()
-    for key in metadata:
-        if hasattr(metadata[key], '__iter__') and not isinstance(metadata[key], str):
-            metadata[key] = metadata[key][::-1]
+    for key, value in metadata.items():
+        if isinstance(value, str) or not hasattr(value, '__iter__'):
+            continue
+        if isinstance(value, np.ndarray):
+            value = np.flip(value)
+        else:
+            value = value[::-1]
+        metadata[key] = value
     if not inplace:
         return metadata
