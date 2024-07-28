@@ -30,9 +30,7 @@ def load(filename, dim_order='zyx', **kwargs):
     As is typical for Python, the returned array will by default have
      dimensions ordered as zyx for 3D image volumes, yx for 1-channel 2D
      images, or yxc for multi-channel (RGB/RGBA) 2D images.
-    Set dim_order='xy' if you instead want dimensions ordered as
-     xyz for 3D image volumes, xy for 1-channel 2D images, or
-     xyc for multi-channel 2D images.
+    Set dim_order='xy' if you want to reverse the order of the axes.
     """
     filename = str(filename)
     while filename.endswith('/'):
@@ -109,13 +107,7 @@ def load(filename, dim_order='zyx', **kwargs):
             data = zarr.open(TODO) #TODO check zyx/xyz order
 
     if 'xy' in dim_order:
-        if has_channel_axis(data):
-            # Can't just transpose because if data is a multi-channel 2D
-            # image, need the channel axis to stay as the last axis.
-            data = data.swapaxes(0, 1)
-        else:
-            data = data.T
-
+        data = data.T
         if extension == 'nrrd':  # TODO check if other formats need this
             utils.transpose_metadata(metadata, inplace=True)
 
@@ -171,13 +163,15 @@ def save(data,
               '.nrrd. Whether or not compression occurs now will depend on '
               'the format you are saving to.')
 
+    channel_axis = find_channel_axis(data)
     if 'xy' in dim_order:
-        if has_channel_axis(data):
-            # Can't just transpose because if data is a multi-channel 2D
-            # image, need the channel axis to stay as the last axis.
-            data = data.swapaxes(0, 1)
-        else:
-            data = data.T
+        data = data.T
+        if hasattr(pixel_size, '__iter__') and not isinstance(pixel_size, str):
+            pixel_size = pixel_size[::-1]
+        if hasattr(units, '__iter__') and not isinstance(units, str):
+            units = units[::-1]
+        utils.transpose_metadata(metadata, inplace=True)
+        # The spatial axes and associated metadata are now in zyx order.
 
     if extension in ['tif', 'tiff']:
         import tifffile
@@ -213,20 +207,36 @@ def save(data,
             if 'space directions' in metadata:
                 raise ValueError('Cannot specify both "space directions" in'
                                  ' metadata and "pixel_size" as an argument.')
+
             try:
                 iter(pixel_size)
+                if len(pixel_size) == data.ndim - 1 and channel_axis is not None:
+                    pixel_size.insert(channel_axis, np.nan)
             except TypeError:
-                pixel_size = [pixel_size] * data.ndim
+                if channel_axis is not None:
+                    pixel_size = [pixel_size] * (data.ndim - 1)
+                    pixel_size.insert(channel_axis, np.nan)
+                else:
+                    pixel_size = [pixel_size] * data.ndim
+            if len(pixel_size) != data.ndim:
+                raise ValueError(f'pixel_size has length {len(pixel_size)},'
+                                 ' but data has {data.ndim} dimensions.')
 
-            if 'xy' in dim_order:
-                pixel_size = np.flip(pixel_size)
-            metadata.update({'space directions': np.flip(np.diag(pixel_size),
-                                                         axis=-1)})
+            pixel_size_not_none = [size for size in pixel_size
+                                   if size is not None and size != np.nan]
+            space_directions = np.diag(pixel_size_not_none).astype(float)
+            # nrrd.format_optional_matrix() expects an entire row of
+            # np.nan for non-spatial dimensions, so insert row(s) for that.
+            none_indices = [i for i, size in enumerate(pixel_size)
+                            if size is None or size == np.nan]
+            space_directions = np.insert(space_directions, none_indices, np.nan, axis=0)
+            metadata.update({'space directions': space_directions})
+
         if 'space dimension' not in metadata and 'space' not in metadata:
             # If the number of spatial dimensions is not specified, assume
             # it's the number of dimensions in the data array, minus 1 if
             # a channel axis is present.
-            if has_channel_axis(data):
+            if find_channel_axis(data) is not None:
                 metadata.update({'space dimension': data.ndim - 1})
             else:
                 metadata.update({'space dimension': data.ndim})
@@ -274,10 +284,7 @@ def save(data,
         from cloudvolume.exceptions import InfoUnavailableError
 
         # CloudVolume expects data in Fortran order
-        if has_channel_axis(data):
-            data = data.swapaxes(0, 1)
-        else:
-            data = data.T
+        data = data.T
 
         resolution = 1
         if pixel_size is not None:
@@ -386,7 +393,7 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
       4-channel (RGBA)  : data.shape must be (y, x, 4)
 
     If `dim_order` is set to 'xy' (instead of the default 'yx'), then
-    swap the y and x above. The channel axis must come last regardless.
+    swap the y and x above.
 
     Images will be shown using either `PIL.Image.fromarray(data).show()`
     or `matplotlib.pyplot.imshow(data)` depending on 'mode'. Uses PIL by
@@ -401,7 +408,7 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
         if os.path.exists(data):
             data = load(data)
 
-    if (not data.ndim == 2) and not (data.ndim == 3 and has_channel_axis(data)):
+    if (not data.ndim == 2) and not (data.ndim == 3 and find_channel_axis(data) is not None):
         m = ('Data must have shape (y, x) for grayscale, '
              '(y, x, 3) for RGB, or (y, x, 4) for RGBA but had '
              f'shape {data.shape}')
@@ -410,9 +417,9 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
         raise ValueError(m)
 
     if 'xy' in dim_order:
-        # Can't just transpose because if data is a multi-channel 2D
-        # image, need the channel axis to stay as the last axis.
-        data = data.swapaxes(0, 1)
+        data = data.T
+    if not find_channel_axis(data, expected_channel_axis=-1):
+        data = data.moveaxis(find_channel_axis(data), -1)
 
     colorbar = False
     if 'colorbar' in kwargs:
@@ -434,11 +441,11 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
 imshow = show  # Function name alias
 
 
-def has_channel_axis(data, expected_channel_axis=[0, -1]):
+def find_channel_axis(data, expected_channel_axis=[0, -1]):
     """
-    Return True if the given numpy array has a shape suggesting
-    that it has a channel (color) axis, that is, an axis with length
-    2 (2-color), 3 (RGB), or 4 (RGBA).
+    If the given numpy array has a shape suggesting that it has a
+    channel (color) axis (that is, any axis with length 2 (2-color),
+    3 (RGB), or 4 (RGBA)), return the index of that axis.
 
     Parameters
     ----------
@@ -452,6 +459,15 @@ def has_channel_axis(data, expected_channel_axis=[0, -1]):
         If a list of ints, all axes with those indices will be checked.
         The default value of [0, -1] checks the first and last axes, which is
         almost always where a channel axis will be found.
+
+    Returns
+    -------
+    int or None
+        The index of the channel axis, or None if no channel axis was found.
+
+        Note that returning 0 means the channel axis is the first axis, so
+        be careful not to do a test like `if find_channel_axis(data):` because
+        0 will evaluate to False even though the data has a channel axis.
     """
     if isinstance(expected_channel_axis, int):
         expected_channel_axis = [expected_channel_axis]
@@ -459,5 +475,5 @@ def has_channel_axis(data, expected_channel_axis=[0, -1]):
         expected_channel_axis = range(data.ndim)
     for axis in expected_channel_axis:
         if data.shape[axis] in [2, 3, 4]:
-            return True
-    return False
+            return axis
+    return None
