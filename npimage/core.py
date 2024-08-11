@@ -419,7 +419,7 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
     if 'xy' in dim_order:
         data = data.T
     if not find_channel_axis(data, expected_channel_axis=-1):
-        data = data.moveaxis(find_channel_axis(data), -1)
+        data = np.moveaxis(data, find_channel_axis(data), -1)
 
     colorbar = False
     if 'colorbar' in kwargs:
