@@ -15,7 +15,7 @@ from builtins import open as builtin_open
 
 import numpy as np
 
-from . import utils
+from . import operations, utils
 
 supported_extensions = [
     'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
@@ -385,7 +385,11 @@ def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
     container.close()
 
 
-def show(data, dim_order='yx', mode='PIL', **kwargs):
+def show(data,
+         dim_order='yx',
+         mode='PIL',
+         convert_to_8bit=True,
+         **kwargs):
     """
     Display a numpy array of pixel values as an image. Supported types:
       1-channel (grayscale) : data.shape must be (y, x)
@@ -418,8 +422,12 @@ def show(data, dim_order='yx', mode='PIL', **kwargs):
 
     if 'xy' in dim_order:
         data = data.T
-    if not find_channel_axis(data, expected_channel_axis=-1):
+    channel_axis = find_channel_axis(data, expected_channel_axis=-1)
+    if channel_axis is not None and channel_axis != -1:
         data = np.moveaxis(data, find_channel_axis(data), -1)
+
+    if convert_to_8bit and data.dtype != np.uint8:
+        data = operations.to_8bit(data)
 
     colorbar = False
     if 'colorbar' in kwargs:
@@ -465,9 +473,15 @@ def find_channel_axis(data, expected_channel_axis=[0, -1]):
     int or None
         The index of the channel axis, or None if no channel axis was found.
 
-        Note that returning 0 means the channel axis is the first axis, so
-        be careful not to do a test like `if find_channel_axis(data):` because
-        0 will evaluate to False even though the data has a channel axis.
+        If expected_channel_axis is given, the returned value will be one of
+        the expected_channel_axis values, or None if no channel axis was found.
+
+        If expected_channel_axis is None, the returned value will be between
+        0 and data.ndim - 1, inclusive, or None if no channel axis was found.
+
+        Note that returning 0 means the channel axis was found and is the first
+        axis, so be careful not to do a test like `if find_channel_axis(data):`
+        because 0 will evaluate to False even though the data has a channel axis.
     """
     if isinstance(expected_channel_axis, int):
         expected_channel_axis = [expected_channel_axis]
