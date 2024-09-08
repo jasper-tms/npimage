@@ -131,6 +131,7 @@ def drawline(image, pt1, pt2, value, thickness=1,
 
 # TODO switch to kwargs
 def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
+                 watertight=True,
                  fill_value=None, convention='corner', out_of_bounds='ignore'):
 
     if fill_value is None:
@@ -181,7 +182,7 @@ def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
 
         # To ensure 3D triangles end up water-tight, need the thickness of the
         # filler lines must be >1 in at least one dimension.
-        if all(thickness == 1):
+        if watertight and all(thickness == 1):
             slopes = abs(endpt - basept)
             if all(eq(slopes, 0)):
                 pass
