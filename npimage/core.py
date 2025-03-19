@@ -175,7 +175,7 @@ def save(data,
 
     if extension in ['tif', 'tiff']:
         import tifffile
-        tifffile.imsave(filename, data=data)
+        tifffile.imwrite(filename, data=data)
 
     if extension in ['jpg', 'jpeg', 'png']:
         # imagej only writes 8-bit jpgs, with nasty clipping if you try to save
