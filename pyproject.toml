@@ -1,0 +1,33 @@
+[build-system]
+requires = ['setuptools', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'numpyimage'
+version = '2.1.1'
+description = 'Load, save, & manipulate image files as numpy arrays'
+readme.file = 'README.md'
+readme.content-type = 'text/markdown'
+requires-python = ">=3.6"
+license = {file = "LICENSE"}
+keywords = ['images', 'pixel arrays', 'image formats', 'convert', 'graphics', 'draw simple shapes']
+authors = [{name = 'Jasper Phelps', email = 'jasper.s.phelps@gmail.com'}]
+classifiers = [
+    'Programming Language :: Python :: 3',
+    'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
+    'Operating System :: OS Independent',
+    'Development Status :: 5 - Production/Stable',
+    'Topic :: Scientific/Engineering :: Image Processing',
+]
+urls = {Repository = 'https://github.com/jasper-tms/npimage'}
+dependencies = [
+    'numpy',
+    'pillow',
+    'tifffile',
+    'pynrrd',
+    'matplotlib',
+    'opencv-python-headless',
+]
+
+[tool.setuptools.packages.find]
+include = ['npimage']
