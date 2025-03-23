@@ -47,6 +47,7 @@ def load(filename, dim_order='zyx', **kwargs):
         raise ValueError(f'File format "{extension}" not supported/recognized.')
 
     data = None
+    metadata = None
 
     if extension in ['jpg', 'jpeg', 'png']:
         from PIL import Image
@@ -113,12 +114,9 @@ def load(filename, dim_order='zyx', **kwargs):
 
     if any([kwargs.get(key, False) for key in
             ['metadata', 'get_metadata', 'return_metadata']]):
-        try:
-            return data, metadata
-        except:
-            print('WARNING: Metadata requested but not found.'
-                  ' Returning image only.')
-            return data
+        if metadata is None:
+            print('WARNING: Metadata is None.')
+        return data, metadata
     else:
         return data
 
