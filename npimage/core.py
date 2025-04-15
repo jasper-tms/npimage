@@ -9,6 +9,7 @@ Function list:
 - show(np_array) -> Displays a numpy array of pixel values as an image
 """
 
+from typing import Literal
 import os
 import glob
 from builtins import open as builtin_open
@@ -385,8 +386,10 @@ def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
 
 def show(data,
          dim_order='yx',
-         mode='PIL',
+         data_type: Literal['image', 'segmentation'] = 'image',
+         mode: Literal['PIL', 'mpl'] = 'PIL',
          convert_to_8bit=True,
+         channel_axis='guess',
          **kwargs):
     """
     Display a numpy array of pixel values as an image. Supported types:
@@ -410,6 +413,15 @@ def show(data,
         if os.path.exists(data):
             data = load(data)
 
+    if data_type == 'segmentation':
+        rng = np.random.default_rng()
+        unique_ids = np.unique(data)
+        id_to_color = {uid: rng.integers(0, 255, size=3) for uid in unique_ids}
+        data_colored = np.zeros((*data.shape, 3), dtype=np.uint8)
+        for uid, color in id_to_color.items():
+            data_colored[data == uid] = color
+        data = data_colored
+
     if (not data.ndim == 2) and not (data.ndim == 3 and find_channel_axis(data) is not None):
         m = ('Data must have shape (y, x) for grayscale, '
              '(y, x, 3) for RGB, or (y, x, 4) for RGBA but had '
@@ -420,8 +432,9 @@ def show(data,
 
     if 'xy' in dim_order:
         data = data.T
-    channel_axis = find_channel_axis(data, expected_channel_axis=-1)
-    if channel_axis is not None and channel_axis != -1:
+    if channel_axis == 'guess':
+        channel_axis = find_channel_axis(data)
+    if utils.isint(channel_axis) and channel_axis != -1:
         data = np.moveaxis(data, find_channel_axis(data), -1)
 
     if convert_to_8bit and data.dtype != np.uint8:
@@ -480,6 +493,7 @@ def find_channel_axis(data, expected_channel_axis=[0, -1]):
         Note that returning 0 means the channel axis was found and is the first
         axis, so be careful not to do a test like `if find_channel_axis(data):`
         because 0 will evaluate to False even though the data has a channel axis.
+        Instead write `if find_channel_axis(data) is not None:`
     """
     if isinstance(expected_channel_axis, int):
         expected_channel_axis = [expected_channel_axis]
