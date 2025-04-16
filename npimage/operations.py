@@ -533,3 +533,18 @@ def remove_bleedthrough(im, contaminated_slice, source_slice,
     """
     #TODO implement ICA and use it to separate the two independent sources
     raise NotImplementedError
+
+
+def assign_random_colors(data: np.ndarray,
+                         seed: Optional[int] = None,
+                         verbose: bool = False,
+                         ) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    if verbose:
+        print('Finding unique IDs...')
+    unique_ids, inverse = np.unique(data, return_inverse=True)
+    if verbose:
+        print('Assigning random colors...')
+    colors = rng.integers(0, 255, size=(len(unique_ids), 3), dtype=np.uint8)
+    data_colored = colors[inverse].reshape(data.shape + (3,))
+    return data_colored
