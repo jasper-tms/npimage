@@ -184,6 +184,7 @@ def adjust_brightness(image: np.ndarray,
 
 def downsample(image: np.ndarray,
                factor: Union[int, Iterable[int]] = 2,
+               method: Literal['mean', 'median', 'max', 'min'] = 'mean',
                keep_input_dtype=True) -> np.ndarray:
     """
     Downsample an image by a given factor along each axis.
@@ -243,8 +244,14 @@ def downsample(image: np.ndarray,
             temp_shape.extend([1, 1])
         else:
             temp_shape.extend([l // f, f])
-    axes_to_avg = tuple(range(1, len(temp_shape), 2))
-    image_downsampled = image.reshape(temp_shape).mean(axis=axes_to_avg)
+    axes_to_collapse = tuple(range(1, len(temp_shape), 2))
+    collapse_functions = {'mean': np.mean, 'max': np.max,
+                          'min': np.min, 'median': np.median}
+    try:
+        collapse_function = collapse_functions[method]
+    except KeyError:
+        raise ValueError(f'method must be one of {collapse_functions.keys()}')
+    image_downsampled = collapse_function(image.reshape(temp_shape), axis=axes_to_collapse)
 
     if keep_input_dtype:
         if np.issubdtype(image.dtype, np.integer):
