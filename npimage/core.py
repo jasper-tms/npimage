@@ -219,7 +219,7 @@ def save(data,
                     pixel_size = [pixel_size] * data.ndim
             if len(pixel_size) != data.ndim:
                 raise ValueError(f'pixel_size has length {len(pixel_size)},'
-                                 ' but data has {data.ndim} dimensions.')
+                                 f' but data has {data.ndim} dimensions.')
 
             pixel_size_not_none = [size for size in pixel_size
                                    if size is not None and size != np.nan]
