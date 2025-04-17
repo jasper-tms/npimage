@@ -414,13 +414,7 @@ def show(data,
             data = load(data)
 
     if data_type == 'segmentation':
-        rng = np.random.default_rng()
-        unique_ids = np.unique(data)
-        id_to_color = {uid: rng.integers(0, 255, size=3) for uid in unique_ids}
-        data_colored = np.zeros((*data.shape, 3), dtype=np.uint8)
-        for uid, color in id_to_color.items():
-            data_colored[data == uid] = color
-        data = data_colored
+        data = utils.assign_random_colors(data, seed=kwargs.get('seed', None))
 
     if (not data.ndim == 2) and not (data.ndim == 3 and find_channel_axis(data) is not None):
         m = ('Data must have shape (y, x) for grayscale, '
