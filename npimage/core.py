@@ -366,13 +366,22 @@ def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
         data = data.swapaxes(1, 2)
     n_frames = data.shape[0]
 
-    if filename.split('.')[-1] not in ['mp4', 'mkv', 'avi', 'mov']:
+    if filename.split('.')[-1].lower() not in ['mp4', 'mkv', 'avi', 'mov']:
         filename += '.mp4'
     if os.path.exists(filename) and not overwrite:
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
-    container = av.open(filename, mode='w')
+    extension = filename.split('.')[-1].lower()
+    if extension == 'mp4':
+        pad = [[0, 0], [0, 0], [0, 0]]
+        if data.shape[1] % 2 != 0:
+            pad[1][1] = 1
+        if data.shape[2] % 2 != 0:
+            pad[2][1] = 1
+        if pad != [[0, 0], [0, 0], [0, 0]]:
+            data = np.pad(data, pad, mode='edge')
 
+    container = av.open(filename, mode='w')
     stream = container.add_stream('libx264', rate=framerate)
     stream.pix_fmt = 'yuv420p'
     stream.options = {'crf': str(crf), 'preset': compression_speed}
