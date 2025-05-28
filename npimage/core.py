@@ -244,13 +244,7 @@ def save(data,
             metadata.update({'space directions': space_directions})
 
         if 'space dimension' not in metadata and 'space' not in metadata:
-            # If the number of spatial dimensions is not specified, assume
-            # it's the number of dimensions in the data array, minus 1 if
-            # a channel axis is present.
-            if find_channel_axis(data) is not None:
-                metadata.update({'space dimension': data.ndim - 1})
-            else:
-                metadata.update({'space dimension': data.ndim})
+            metadata.update({'space dimension': data.ndim})
         if units is not None:
             if hasattr(units, '__iter__') and not isinstance(units, str):
                 units = list(units)
