@@ -77,6 +77,17 @@ def load(filename, dim_order='zyx', **kwargs):
         if 'shape' in kwargs:
             data = data.reshape(*kwargs['shape'])
 
+    if extension == 'ng':
+        from cloudvolume import CloudVolume
+        if '://' not in filename:
+            filename = 'file://' + filename
+        vol = CloudVolume(filename)
+        data = np.array(vol[:]).squeeze()
+        # CloudVolume is unusual in returning data in Fortran order,
+        # so we transpose xyz -> zyx
+        data = data.T
+        metadata = utils.transpose_metadata(vol.info, inplace=False)
+
     if extension == 'zarr':
         if 'dataset' not in kwargs:
             dataset = filename + '/'
@@ -95,23 +106,18 @@ def load(filename, dim_order='zyx', **kwargs):
                 raise Exception(f'Multiple datasets found within {filename}.'
                                 ' Pass a "dataset=" argument to specify the'
                                 ' one you want.')
+        raise NotImplementedError('Reading Zarr format not yet implemented.')
+        #import zarr
+        #data = zarr.open(TODO) #Finish this and be sure to check zyx/xyz order
 
-        try:
-            import daisy
-        except:
-            daisy = None
-
-        if daisy:
-            data = daisy.open_ds(filename, dataset)[:] #TODO check zyx/xyz order. Pretty sure daisy zarrs are zyx
-        else:
-            raise NotImplementedError
-            import zarr
-            data = zarr.open(TODO) #TODO check zyx/xyz order
+    if data is None:
+        raise ValueError(f'Could not read file {filename}. '
+                         'Please check the file format and try again.')
 
     if 'xy' in dim_order:
         data = data.T
-        if extension == 'nrrd':  # TODO check if other formats need this
-            utils.transpose_metadata(metadata, inplace=True)
+        if extension in ['nrrd', 'ng']:
+            metadata = utils.transpose_metadata(metadata, inplace=False)
 
     if any([kwargs.get(key, False) for key in
             ['metadata', 'get_metadata', 'return_metadata']]):
