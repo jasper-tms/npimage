@@ -185,7 +185,8 @@ def adjust_brightness(image: np.ndarray,
 def downsample(image: np.ndarray,
                factor: Union[int, Iterable[int]] = 2,
                method: Literal['mean', 'median', 'max', 'min'] = 'mean',
-               keep_input_dtype=True) -> np.ndarray:
+               keep_input_dtype=True,
+               verbose=False) -> np.ndarray:
     """
     Downsample an image by a given factor along each axis.
 
@@ -214,7 +215,8 @@ def downsample(image: np.ndarray,
         else:
             factor = (factor,) * len(image.shape)
     if len(factor) == len(image.shape) - 1 and image.shape[-1] in [3, 4]:
-        print('RGB/RGBA image detected - not downsampling last axis.')
+        if verbose:
+            print('RGB/RGBA image detected - not downsampling last axis.')
         factor = (*factor, 1)
     if any([f > l > 1 for f, l in zip(factor, image.shape)]):
         raise ValueError('Downsampling factor must be <= image size along each axis')
