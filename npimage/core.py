@@ -160,10 +160,10 @@ def save(data,
     if os.path.exists(filename) and not overwrite:
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
-    extension = filename.split('.')[-1]
+    extension = filename.split('.')[-1].lower()
     assert extension in supported_extensions, f'Filetype {extension} not supported'
 
-    if compress and extension not in ['nrrd', 'ng']:
+    if compress is not None and extension not in ['nrrd', 'ng']:
         print('WARNING: compress argument is ignored because not saving as '
               '.nrrd. Whether or not compression occurs now will depend on '
               'the format you are saving to.')
@@ -201,9 +201,15 @@ def save(data,
             metadata = metadata.copy()
         custom_field_map = {}
 
-        if compress is True:
+        if compress is True or compress in ['lossless', 'gzip']:
             metadata.update({'encoding': 'gzip'})
-        if compress is False or 'encoding' not in metadata:
+        elif compress is False:
+            metadata.update({'encoding': 'raw'})
+        elif compress is not None:
+            raise ValueError('For .nrrd format, compress must be '
+                             'True/"lossless"/"gzip", or False,'
+                             f' but was "{compress}"')
+        if 'encoding' not in metadata:
             metadata.update({'encoding': 'raw'})
 
         if isinstance(metadata.get('space directions', None), str):
