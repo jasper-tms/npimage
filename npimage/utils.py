@@ -75,6 +75,9 @@ def transpose_metadata(metadata: dict or OrderedDict,
     for key, value in metadata.items():
         if isinstance(value, str) or not hasattr(value, '__iter__'):
             continue
+        if key == 'scales':
+            value = [transpose_metadata(scale, inplace=False)
+                     for scale in value]
         if isinstance(value, np.ndarray):
             value = np.flip(value)
         else:
