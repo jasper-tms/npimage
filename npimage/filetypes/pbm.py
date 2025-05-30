@@ -19,14 +19,18 @@ def load(filename):
         while line.startswith(b'#'):  # Print and skip comments
             print(line.decode().strip('\n'))
             line = f.readline()
-        w, h = line.decode().strip().split()
-        w = int(w)
-        h = int(h)
-        data = f.readline()
-        data = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
-        data = data.reshape((h, w)).view(bool)
+        line = line.decode().strip().split()
+        w = int(line[0])
+        h = int(line[1])
 
-    return data
+        # Calculate the number of bytes per row (padded to the next byte boundary)
+        row_bytes = (w + 7) // 8
+        data = np.frombuffer(f.read(row_bytes * h), dtype=np.uint8)
+
+        # Unpack bits and reshape, then slice to remove padding bits
+        data = np.unpackbits(data).reshape((h, row_bytes * 8))[:, :w]
+
+    return data.astype(bool)
 
 
 def save(data, filename, comments=None):
@@ -62,4 +66,38 @@ def save(data, filename, comments=None):
         f.write(b'\n')
 
         # Data
-        f.write(np.packbits(data).tobytes())
+        # Pad each row to the next byte boundary
+        row_bytes = (data.shape[1] + 7) // 8
+        padded_data = np.zeros((data.shape[0], row_bytes * 8), dtype=bool)
+        padded_data[:, :data.shape[1]] = data
+        f.write(np.packbits(padded_data).tobytes())
+
+
+def predict_file_size(data: np.ndarray) -> int:
+    """
+    Predict the file size of a PBM file given the image data.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        The image data as a numpy array.
+
+    Returns
+    -------
+    int
+        The predicted file size in bytes.
+    """
+    if not isinstance(data, np.ndarray):
+        raise TypeError('data must be a np.ndarray but was {}'.format(type(data)))
+
+    # Header: 'P4\n' (3 bytes)
+    header_size = 3
+
+    # Dimensions: '<width> <height>\n'
+    dimensions_size = len(f"{data.shape[1]} {data.shape[0]}\n")
+
+    # Data: Each row is padded to the next byte boundary
+    row_bytes = (data.shape[1] + 7) // 8
+    data_size = row_bytes * data.shape[0]
+
+    return header_size + dimensions_size + data_size
