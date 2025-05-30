@@ -89,6 +89,12 @@ def load(filename, dim_order='zyx', **kwargs):
         metadata = utils.transpose_metadata(vol.info, inplace=False)
 
     if extension == 'zarr':
+        if '.ome.zarr' in filename:
+            import ome_zarr.io.parse_url
+            import ome_zarr.reader.Reader
+            raise NotImplementedError
+            return 'something something'
+
         if 'dataset' not in kwargs:
             dataset = filename + '/'
             while (not os.path.exists(os.path.join(dataset, '.zarray')) and
@@ -346,13 +352,30 @@ write = save  # Function name alias
 to_file = save  # Function name alias
 
 
-def save_video(data, filename, overwrite=False, dim_order='yx', time_axis=0,
+def save_video(data, filename, time_axis=0, overwrite=False, dim_order='yx',
                framerate=30, crf=23, compression_speed='medium'):
     """
     Save a 3D numpy array as a video, with a specified axis as the time axis.
 
     Follows the PyAV cookbook section on generating video from numpy arrays:
     https://pyav.basswood-io.com/docs/develop/cookbook/numpy.html#generating-video
+
+    Parameters
+    ----------
+    data : numpy.ndarray or list of filenames
+        A 3D numpy array of pixel values.
+
+    filename : str
+        The filename to save the video to.
+
+    time_axis : int, default 0
+        The axis of the data array that will be played as time in the video.
+
+    overwrite : bool, default False
+        Whether to overwrite the file if it already exists.
+
+    dim_order : 'yx' (default) or 'xy'
+        The order of the spatial dimensions in the input data.
     """
     if not data.ndim == 3:
         raise ValueError('Input data must be a 3D numpy array.')
