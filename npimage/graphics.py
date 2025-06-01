@@ -624,8 +624,8 @@ def get_voxels_within_distance(distance, center=None, ndims=None,
     }
     d = norms[metric]
 
-    candidate_pts_scaled = candidate_pts * voxel_size
-    return candidate_pts[d(candidate_pts_scaled) <= distance] + center
+    candidate_pts_scaled = candidate_pts * voxel_size / distance
+    return candidate_pts[d(candidate_pts_scaled) <= 1] + center
 
 
 def floodfill(image, seed, fill_value, fill_diagonally=False,
