@@ -85,3 +85,65 @@ def transpose_metadata(metadata: dict or OrderedDict,
         metadata[key] = value
     if not inplace:
         return metadata
+
+
+def is_out_of_bounds(coords, shape, allow_negative_wrapping=False, convention='corner'):
+    """
+    Check if coordinates are out of the bounds of a given shape.
+
+    Parameters
+    ----------
+    coords: Coordinates to check (can be a list or numpy array).
+
+    shape: Shape of the volume (tuple or list).
+
+    allow_negative_wrapping
+      If False, all negative coordinates are considered out of bounds
+      If True, negative coordinates with absolute value less than the shape
+      are considered in bounds (in which case they can be used as indices
+      to a list or np.ndarray and they will wrap around).
+
+    convention: 'corner' or 'center' to specify whether the coordinate
+      0 refers to the top-left corner of the first pixel (in which case
+      -0.1 is out of bounds) or the center of the first pixel (in which
+      case -0.1 is in bounds, down to -0.5 being the last in-bounds value).
+
+    Returns
+    -------
+    Boolean array indicating whether each coordinate is within bounds.
+    """
+    if convention not in ['corner', 'center']:
+        raise ValueError("Convention must be 'corner' or 'center'.")
+    if not isinstance(coords, np.ndarray):
+        coords = np.array(coords)
+    if coords.ndim == 1 and coords.shape[0] == len(shape):
+        return is_out_of_bounds(coords[np.newaxis, :], shape,
+                                allow_negative_wrapping, convention)[0]
+    if coords.ndim != 2 or coords.shape[1] != len(shape):
+        raise ValueError(f'Coordinates must be a Nx{len(shape)} array, '
+                         f'but got shape {coords.shape}.')
+
+    upper_limit = shape
+    if allow_negative_wrapping:
+        lower_limit = tuple(-i for i in shape)
+    else:
+        lower_limit = 0
+
+    if convention == 'center':
+        lower_limit = np.array(lower_limit) - 0.5
+        upper_limit = np.array(upper_limit) - 0.5
+
+    underflows = coords < lower_limit
+    overflows = coords >= upper_limit
+
+    return np.logical_or(underflows, overflows).any(axis=-1)
+
+
+def is_in_bounds(*args, **kwargs):
+    return np.logical_not(is_out_of_bounds(*args, **kwargs))
+
+
+def remove_out_of_bounds(coords, shape, allow_negative_wrapping=False,
+                         convention='corner'):
+    in_bounds = is_in_bounds(coords, shape, allow_negative_wrapping, convention)
+    return coords[in_bounds]
