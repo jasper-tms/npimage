@@ -51,7 +51,7 @@ import itertools
 import numpy as np
 np.set_printoptions(suppress=True)
 
-from .utils import eq, ifloor, iceil, iround
+from .utils import eq, ifloor, iceil, iround, is_out_of_bounds, remove_out_of_bounds
 
 
 # --- Primitive shapes - points, lines, triangles, circles, spheres --- #
@@ -358,40 +358,28 @@ def imget(image, coords, convention='corner',
     makes more sense in most graphics applications.
         out_of_bounds, string   : 'ignore' (default), 'wrap', or 'raise'
     """
-    assert convention in ['corner', 'center']
     if not isinstance(coords, np.ndarray):
         coords = np.array(coords)
-    ax = len(coords.shape) - 1
+    n_original = coords.shape[0]
 
-    if convention == 'corner':
-        is_negative = coords < 0
-        exceeds_dimensions = coords >= image.shape
-    elif convention == 'center':
-        is_negative = coords < -0.5
-        exceeds_dimensions = coords + 0.5 >= image.shape
-
-    is_out_of_bounds = np.logical_or(is_negative, exceeds_dimensions)
-    if (is_out_of_bounds).any():
-        def warn():
+    if out_of_bounds == 'wrap':
+        allow_negative_wrapping = True
+    elif out_of_bounds == 'ignore':
+        allow_negative_wrapping = False
+    elif out_of_bounds != 'raise':
+        raise ValueError("out_of_bounds must be 'ignore', 'raise', or"
+                         f"'wrap' but was {out_of_bounds}.")
+    coords = remove_out_of_bounds(coords, image.shape, allow_negative_wrapping, convention)
+    if n_original > coords.shape[0]:
+        n_out_of_bounds = n_original - coords.shape[0]
+        if out_of_bounds == 'raise':
+            raise IndexError(f'{n_out_of_bounds}/{n_original} coordinates'
+                             'are out of bounds.')
+        if verbose:
             print('WARNING: Some requested coordinates are out of bounds.'
                   ' The returned list of values will be shorter than the'
                   ' request list, and therefore the returned values will not'
                   ' match 1-to-1 with the requested coordinates.')
-        if out_of_bounds == 'ignore':
-            coords = coords[~is_out_of_bounds.any(axis=ax)]
-            if verbose:
-                print(f'verbose={verbose}')
-                warn()
-        elif out_of_bounds == 'wrap':
-            coords = coords[~exceeds_dimensions.any(axis=ax)]
-            if verbose:
-                warn()
-        elif out_of_bounds == 'raise':
-            raise IndexError('Some coordinates out of bounds:\n'
-                             f'{coords[is_out_of_bounds]}')
-        else:
-            raise ValueError("out_of_bounds must be 'ignore', 'raise', or"
-                             f"'wrap' but was {out_of_bounds}.")
 
     if convention == 'corner':
         return image[tuple(ifloor(coords).T)]
@@ -409,26 +397,20 @@ def imset(image, coords, value, convention='corner', out_of_bounds='ignore'):
     makes more sense in most graphics applications.
         out_of_bounds, string   : 'ignore' (default), 'wrap', or 'raise'
     """
-    assert convention in ['corner', 'center']
     if not isinstance(coords, np.ndarray):
         coords = np.array(coords)
 
-    if convention == 'corner':
-        is_negative = coords < 0
-        exceeds_dimensions = coords >= image.shape
-    else:  # convention == 'center'
-        is_negative = coords < -0.5
-        exceeds_dimensions = coords + 0.5 >= image.shape
-
-    is_out_of_bounds = np.logical_or(is_negative, exceeds_dimensions)
-    if (is_out_of_bounds).any():
-        if out_of_bounds == 'ignore':
-            coords = coords[~is_out_of_bounds.any(axis=1)]
-        elif out_of_bounds == 'wrap':
-            coords = coords[~exceeds_dimensions.any(axis=1)]
+    if out_of_bounds == 'wrap':
+        allow_negative_wrapping = True
+    else:
+        allow_negative_wrapping = False
+    is_oob = is_out_of_bounds(coords, image.shape, allow_negative_wrapping, convention)
+    if is_oob.any():
+        if out_of_bounds in ['ignore', 'wrap']:
+            coords = coords[~is_oob]
         elif out_of_bounds == 'raise':
             raise IndexError('Some coordinates out of bounds:\n'
-                             f'{coords[is_out_of_bounds]}')
+                             f'{coords[is_oob]}')
         else:
             raise ValueError("out_of_bounds must be 'ignore', 'raise', or"
                              f"'wrap' but was {out_of_bounds}.")
