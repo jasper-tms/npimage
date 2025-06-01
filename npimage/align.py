@@ -83,7 +83,10 @@ def find_landmark(image: np.ndarray,
     else:
         top_left = max_loc[::-1]  # Includes a flip from (x, y) to (y, x)
         match_score = max_val
+
     if not subpixel_accuracy:
+        top_left = (top_left[0] + search_offset[0],
+                    top_left[1] + search_offset[1])
         return top_left, match_score
 
     # Subpixel accuracy: Fit a quadratic to a patch around the best score
