@@ -19,6 +19,37 @@ import numpy as np
 from .utils import iround, eq, isint
 
 
+def squeeze_dtype(image: np.ndarray):
+    """
+    Cast a numpy array to the smallest possible dtype without losing information.
+    """
+    if not isinstance(image, np.ndarray):
+        raise TypeError('image must be a numpy array')
+
+    im_has_fractions = not np.all(image == np.floor(image))
+    if im_has_fractions:
+        candidates = [np.float16, np.float32, np.float64]
+        # TODO some logic
+        print('WARNING: squeeze_dtype not fully implemented on float values,'
+              ' returning original data unchanged.')
+        return image
+    elif image.min() < 0:
+        candidates = [np.int8, np.int16, np.int32, np.int64]
+    elif image.max() <= 1:
+        return image.astype(bool, copy=False)
+    else:
+        candidates = [np.uint8, np.uint16, np.uint32, np.uint64]
+
+    image_max = image.max()
+    if image_max <= 1:
+        return image.astype(bool, copy=False)
+    for dtype in candidates:
+        info = np.iinfo(dtype)
+        if image_max <= info.max:
+            return image.astype(dtype, copy=False)
+    raise ValueError('Image has values larger than the maximum representable value')
+
+
 def to_8bit(image: np.ndarray, **kwargs) -> np.ndarray:
     """
     Convert an image to 8-bit.
