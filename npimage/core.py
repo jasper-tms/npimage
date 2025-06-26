@@ -352,10 +352,10 @@ write = save  # Function name alias
 to_file = save  # Function name alias
 
 
-def save_video(data, filename, time_axis=0, overwrite=False, dim_order='yx',
-               framerate=30, crf=23, compression_speed='medium'):
+def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
+               dim_order='yx', framerate=30, crf=23, compression_speed='medium'):
     """
-    Save a 3D numpy array as a video, with a specified axis as the time axis.
+    Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
 
     Follows the PyAV cookbook section on generating video from numpy arrays:
     https://pyav.basswood-io.com/docs/develop/cookbook/numpy.html#generating-video
@@ -363,7 +363,7 @@ def save_video(data, filename, time_axis=0, overwrite=False, dim_order='yx',
     Parameters
     ----------
     data : numpy.ndarray or list of filenames
-        A 3D numpy array of pixel values.
+        A 3D (grayscale) or 4D (RGB) numpy array of pixel values.
 
     filename : str
         The filename to save the video to.
@@ -371,24 +371,44 @@ def save_video(data, filename, time_axis=0, overwrite=False, dim_order='yx',
     time_axis : int, default 0
         The axis of the data array that will be played as time in the video.
 
+    color_axis : int or None, default None
+        If not None, specifies the axis of the color channels (e.g., -1 for last axis, 1 for second axis).
+        If None, data is assumed to be grayscale.
+
     overwrite : bool, default False
         Whether to overwrite the file if it already exists.
 
     dim_order : 'yx' (default) or 'xy'
         The order of the spatial dimensions in the input data.
     """
-    if not data.ndim == 3:
-        raise ValueError('Input data must be a 3D numpy array.')
     try:
         import av
     except ImportError:
-        raise ImportError('To save videos, you must have PyAV installed. '
-                          'You can install it with "pip install av".')
-    data = np.moveaxis(data, time_axis, 0)
-    if 'xy' in dim_order:
-        data = data.swapaxes(1, 2)
-    n_frames = data.shape[0]
+        raise ImportError('To save videos, you must have PyAV installed. You can install it with "pip install av".')
 
+    if color_axis is not None:
+        if data.ndim != 4:
+            raise ValueError('Input data must be a 4D numpy array for color video.')
+        # Move time axis to 0, color axis to -1
+        data = np.moveaxis(data, time_axis, 0)
+        if color_axis != -1:
+            data = np.moveaxis(data, color_axis, -1)
+        if 'xy' in dim_order:
+            data = data.swapaxes(1, 2)
+        n_frames = data.shape[0]
+        height, width, channels = data.shape[1:]
+        if channels != 3:
+            raise ValueError('Color video must have 3 channels (RGB).')
+    else:
+        if data.ndim != 3:
+            raise ValueError('Input data must be a 3D numpy array for grayscale video.')
+        data = np.moveaxis(data, time_axis, 0)
+        if 'xy' in dim_order:
+            data = data.swapaxes(1, 2)
+        n_frames = data.shape[0]
+        height, width = data.shape[1:]
+
+    filename = os.path.expanduser(str(filename))
     if filename.split('.')[-1].lower() not in ['mp4', 'mkv', 'avi', 'mov']:
         filename += '.mp4'
     if os.path.exists(filename) and not overwrite:
@@ -397,9 +417,9 @@ def save_video(data, filename, time_axis=0, overwrite=False, dim_order='yx',
     extension = filename.split('.')[-1].lower()
     if extension == 'mp4':
         pad = [[0, 0], [0, 0], [0, 0]]
-        if data.shape[1] % 2 != 0:
+        if height % 2 != 0:
             pad[1][1] = 1
-        if data.shape[2] % 2 != 0:
+        if width % 2 != 0:
             pad[2][1] = 1
         if pad != [[0, 0], [0, 0], [0, 0]]:
             data = np.pad(data, pad, mode='edge')
@@ -412,7 +432,10 @@ def save_video(data, filename, time_axis=0, overwrite=False, dim_order='yx',
     stream.width = data.shape[2]
 
     for frame_i in range(n_frames):
-        frame = av.VideoFrame.from_ndarray(data[frame_i], format='gray')
+        if color_axis is not None:
+            frame = av.VideoFrame.from_ndarray(data[frame_i], format='rgb24')
+        else:
+            frame = av.VideoFrame.from_ndarray(data[frame_i], format='gray')
         for packet in stream.encode(frame):
             container.mux(packet)
 
