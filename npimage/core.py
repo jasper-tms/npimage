@@ -45,7 +45,7 @@ def load(filename, dim_order='zyx', **kwargs):
                          f' "{filename}". Please specify the file type via'
                          ' the `format` argument, e.g. format="tif"')
     if extension not in supported_extensions:
-        raise ValueError(f'File format "{extension}" not supported/recognized.')
+        raise ValueError(f'File format of "{filename}" not supported/recognized.')
 
     data = None
     metadata = None
