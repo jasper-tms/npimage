@@ -33,7 +33,7 @@ def load(filename, dim_order='zyx', **kwargs):
      images, or yxc for multi-channel (RGB/RGBA) 2D images.
     Set dim_order='xy' if you want to reverse the order of the axes.
     """
-    filename = str(filename)
+    filename = os.path.expanduser(str(filename))
     while filename.endswith('/'):
         filename = filename[:-1]
     if 'format' in kwargs:
@@ -161,7 +161,7 @@ def save(data,
     Currently `pixel_size`, `units`, and `compress` are only recognized
     when saving to .nrrd and .ng files, and ignored otherwise.
     """
-    filename = str(filename)
+    filename = os.path.expanduser(str(filename))
     filename = filename.rstrip('/')
     if os.path.exists(filename) and not overwrite:
         raise FileExistsError(f'File {filename} already exists. '
