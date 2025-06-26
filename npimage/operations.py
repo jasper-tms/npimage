@@ -70,7 +70,8 @@ def to_16bit(image: np.ndarray, **kwargs) -> np.ndarray:
 
 def cast(image: np.ndarray,
          output_dtype: Union[str, np.dtype],
-         maximize_contrast=True,
+         maximize_contrast: bool = False,
+         round_before_cast_to_int: bool = True,
          bottom_percentile=0.05,
          top_percentile=99.95,
          bottom_value=None,
@@ -132,11 +133,15 @@ def cast(image: np.ndarray,
         raise TypeError(f'Unsupported dtype: {output_dtype}')
 
     if not maximize_contrast:
+        if (round_before_cast_to_int
+                and np.issubdtype(output_dtype, np.integer)
+                and not np.issubdtype(image.dtype, np.integer)):
+            image = image.round()
         return np.clip(
             image,
             info.min,
             info.max
-        ).astype(output_dtype)
+        ).astype(output_dtype, copy=False)
 
     if bottom_value is None or top_value is None:
         percentiles = np.percentile(image, [bottom_percentile, top_percentile])
