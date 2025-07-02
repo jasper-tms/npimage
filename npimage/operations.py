@@ -19,12 +19,14 @@ import numpy as np
 from .utils import iround, eq, isint
 
 
-def squeeze_dtype(image: np.ndarray):
+def squeeze_dtype(image: np.ndarray, minimum_bits=1):
     """
     Cast a numpy array to the smallest possible dtype without losing information.
     """
     if not isinstance(image, np.ndarray):
         raise TypeError('image must be a numpy array')
+    if minimum_bits > 64:
+        raise ValueError('minimum_bits must be <= 64')
 
     im_has_fractions = not np.all(image == np.floor(image))
     if im_has_fractions:
@@ -35,17 +37,17 @@ def squeeze_dtype(image: np.ndarray):
         return image
     elif image.min() < 0:
         candidates = [np.int8, np.int16, np.int32, np.int64]
-    elif image.max() <= 1:
+    elif image.max() <= 1 and minimum_bits <= 1:
         return image.astype(bool, copy=False)
     else:
         candidates = [np.uint8, np.uint16, np.uint32, np.uint64]
 
     image_max = image.max()
-    if image_max <= 1:
+    if image_max <= 1 and minimum_bits <= 1:
         return image.astype(bool, copy=False)
     for dtype in candidates:
         info = np.iinfo(dtype)
-        if image_max <= info.max:
+        if image_max <= info.max and info.bits >= minimum_bits:
             return image.astype(dtype, copy=False)
     raise ValueError('Image has values larger than the maximum representable value')
 
