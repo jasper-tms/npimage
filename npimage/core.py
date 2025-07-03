@@ -20,8 +20,20 @@ from . import operations, utils
 
 supported_extensions = [
     'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
-    'nrrd', 'zarr', 'raw', 'vol', 'ng'
+    'nrrd', 'zarr', 'raw', 'vol', 'ng', 'heic'
 ]
+
+# Flag to track if HEIF opener has been registered
+_heif_opener_registered = False
+
+
+def _ensure_heif_opener_registered():
+    """Register the HEIF opener if not already registered."""
+    global _heif_opener_registered
+    if not _heif_opener_registered:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+        _heif_opener_registered = True
 
 
 def load(filename, dim_order='zyx', **kwargs):
@@ -51,6 +63,11 @@ def load(filename, dim_order='zyx', **kwargs):
     metadata = None
 
     if extension in ['jpg', 'jpeg', 'png']:
+        from PIL import Image
+        data = np.array(Image.open(filename)) #PIL.Image.open returns zyx order
+
+    if extension == 'heic':
+        _ensure_heif_opener_registered()
         from PIL import Image
         data = np.array(Image.open(filename)) #PIL.Image.open returns zyx order
 
@@ -193,6 +210,11 @@ def save(data,
         # a 16 or 32 bit image as jpg. PIL probably does too. TODO investigate,
         # and print warning if user tries to save a 16- or more bit array as jpg.
         from PIL import Image  # pip install pillow
+        Image.fromarray(data).save(filename)
+
+    if extension == 'heic':
+        _ensure_heif_opener_registered()
+        from PIL import Image
         Image.fromarray(data).save(filename)
 
     if extension == 'pbm':
