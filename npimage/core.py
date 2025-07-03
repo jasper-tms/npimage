@@ -580,3 +580,88 @@ def find_channel_axis(data, expected_channel_axis=[0, -1]):
         if data.shape[axis] in [2, 3, 4]:
             return axis
     return None
+
+
+def load_video(filename, force_rgb=False, progress_bar=True):
+    """
+    Load all images in a video file as a numpy array.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the video file
+    force_rgb : bool, default False
+        If True, always return frames as RGB arrays (shape=(H, W, 3))
+        If False, return frames in their native format (e.g., grayscale if possible)
+    progress_bar : bool, default True
+        If True, display a progress bar
+
+    Returns
+    -------
+    data : numpy.ndarray
+        The video frames as a numpy array, shape (num_frames, height, width[, channels])
+    """
+    try:
+        import av
+    except ImportError:
+        raise ImportError('To use load_video, install PyAV: pip install av')
+    from tqdm import tqdm
+    container = av.open(filename)
+    stream = container.streams.video[0]
+    num_frames = stream.frames
+    if not num_frames or num_frames == 0:
+        # If we don't know the number of frames, we can't preallocate, so
+        # it's hard to do better than the following approach (which temporarily
+        # uses double the amount of RAM than the preallocated approach uses).
+        return np.array(list(lazy_load_video(filename, force_rgb=force_rgb)))
+    else:
+        # Load first image to get shape and dtype
+        frame_iter = container.decode(stream)
+        first_frame = next(frame_iter)
+        if force_rgb:
+            first_img = first_frame.to_ndarray(format='rgb24')
+        else:
+            first_img = first_frame.to_ndarray()
+        # Preallocate memory for the entire array
+        data = np.empty((num_frames, *first_img.shape), dtype=first_img.dtype)
+        # Then fill it up frame by frame
+        data[0] = first_img
+        for i, frame in tqdm(enumerate(frame_iter, start=1), total=num_frames,
+                             desc='Loading video', disable=not progress_bar):
+            if force_rgb:
+                img = frame.to_ndarray(format='rgb24')
+            else:
+                img = frame.to_ndarray()
+            data[i] = img
+        return data
+
+
+def lazy_load_video(filename, force_rgb=False):
+    """
+    Lazily load video frames as numpy arrays using PyAV.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the video file.
+    force_rgb : bool, default False
+        If True, always return frames as RGB arrays (shape=(H, W, 3)).
+        If False, return frames in their native format (e.g., grayscale if possible).
+
+    Yields
+    ------
+    frame : np.ndarray
+        Video frame as a numpy array, shape (height, width[, colors]).
+    """
+    try:
+        import av
+    except ImportError:
+        raise ImportError('To use lazy_load_video, install PyAV: pip install av')
+    container = av.open(filename)
+    stream = container.streams.video[0]
+    for frame in container.decode(stream):
+        if force_rgb:
+            img = frame.to_ndarray(format='rgb24')
+        else:
+            img = frame.to_ndarray()
+        yield img
