@@ -1,0 +1,6 @@
+numpy
+pillow
+tifffile
+pynrrd
+matplotlib
+opencv-python-headless
