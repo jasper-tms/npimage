@@ -36,7 +36,7 @@ jobs:
       - name: Get version from pyproject.toml
         id: get_version
         run: |
-          VERSION=$(grep -Po '(?<=^version = ")[^"]+' pyproject.toml)
+          VERSION=$(grep -Po 'version\s*=\s*["\x27]\K[^"\x27]+' pyproject.toml)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
