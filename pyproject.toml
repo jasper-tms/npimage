@@ -23,6 +23,7 @@ urls = {Repository = 'https://github.com/jasper-tms/npimage'}
 dependencies = [
     'numpy',
     'pillow',
+    'pillow-heif',
     'tifffile',
     'pynrrd',
     'matplotlib',
