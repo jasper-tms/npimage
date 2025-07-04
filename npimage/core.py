@@ -362,7 +362,9 @@ write = save  # Function name alias
 to_file = save  # Function name alias
 
 
-def load_video(filename, force_rgb=False, progress_bar=True):
+def load_video(filename,
+               return_framerate=False,
+               progress_bar=True) -> Union[np.ndarray, Tuple[np.ndarray, float]]:
     """
     Load all images in a video file as a numpy array.
 
@@ -370,53 +372,55 @@ def load_video(filename, force_rgb=False, progress_bar=True):
     ----------
     filename : str
         Path to the video file
-    force_rgb : bool, default False
-        If True, always return frames as RGB arrays (shape=(H, W, 3))
-        If False, return frames in their native format (e.g., grayscale if possible)
+    return_framerate : bool, default False
+        If True, return the frame rate of the video
     progress_bar : bool, default True
         If True, display a progress bar
 
     Returns
     -------
     data : numpy.ndarray
-        The video frames as a numpy array, shape (num_frames, height, width[, channels])
+        The video frames as a numpy array, shape (num_frames, height, width, colors)
     """
     try:
         import av
+        from tqdm import tqdm
     except ImportError:
-        raise ImportError('To use load_video, install PyAV: pip install av')
-    from tqdm import tqdm
+        raise ImportError('Missing optional dependency for video processing,'
+                          ' run `pip install av tqdm`')
+
     container = av.open(filename)
     stream = container.streams.video[0]
     num_frames = stream.frames
     if not num_frames or num_frames == 0:
         # If we don't know the number of frames, we can't preallocate, so
-        # it's hard to do better than the following approach (which temporarily
-        # uses double the amount of RAM than the preallocated approach uses).
-        return np.array(list(lazy_load_video(filename, force_rgb=force_rgb)))
+        # it's hard to do better than the following approach which temporarily
+        # uses double the amount of RAM compared to the preallocated approach.
+        data = np.array(list(lazy_load_video(filename)))
+        if return_framerate:
+            return data, float(stream.average_rate)
+        else:
+            return data
     else:
         # Load first image to get shape and dtype
         frame_iter = container.decode(stream)
         first_frame = next(frame_iter)
-        if force_rgb:
-            first_img = first_frame.to_ndarray(format='rgb24')
-        else:
-            first_img = first_frame.to_ndarray()
+        first_img = first_frame.to_ndarray(format='rgb24')
         # Preallocate memory for the entire array
         data = np.empty((num_frames, *first_img.shape), dtype=first_img.dtype)
         # Then fill it up frame by frame
         data[0] = first_img
         for i, frame in tqdm(enumerate(frame_iter, start=1), total=num_frames,
                              desc='Loading video', disable=not progress_bar):
-            if force_rgb:
-                img = frame.to_ndarray(format='rgb24')
-            else:
-                img = frame.to_ndarray()
+            img = frame.to_ndarray(format='rgb24')
             data[i] = img
-        return data
+        if return_framerate:
+            return data, float(stream.average_rate)
+        else:
+            return data
 
 
-def lazy_load_video(filename, force_rgb=False):
+def lazy_load_video(filename):
     """
     Lazily load video frames as numpy arrays using PyAV.
 
@@ -424,31 +428,115 @@ def lazy_load_video(filename, force_rgb=False):
     ----------
     filename : str
         Path to the video file.
-    force_rgb : bool, default False
-        If True, always return frames as RGB arrays (shape=(H, W, 3)).
-        If False, return frames in their native format (e.g., grayscale if possible).
 
     Yields
     ------
     frame : np.ndarray
-        Video frame as a numpy array, shape (height, width[, colors]).
+        Video frame as a numpy array, shape (height, width, colors).
     """
     try:
         import av
     except ImportError:
-        raise ImportError('To use lazy_load_video, install PyAV: pip install av')
+        raise ImportError('Missing optional dependency for video processing,'
+                          ' run `pip install av tqdm`')
     container = av.open(filename)
     stream = container.streams.video[0]
     for frame in container.decode(stream):
-        if force_rgb:
-            img = frame.to_ndarray(format='rgb24')
-        else:
-            img = frame.to_ndarray()
+        img = frame.to_ndarray(format='rgb24')
         yield img
 
 
+codec_aliases = {
+    "libx264": "libx264",
+    "avc1": "libx264",
+    "h264": "libx264",
+    "H.264": "libx264",
+    "libx265": "libx265",
+    "hevc": "libx265",
+    "hvc1": "libx265",
+    "hev1": "libx265",
+    "h265": "libx265",
+    "H.265": "libx265",
+}
+
+
+def video_writer(filename, framerate=30, crf=23, compression_speed='medium',
+                 codec: Literal['libx264', 'libx265'] = 'libx264'):
+    """
+    Create a video writer object for saving frames to a video file.
+
+    Parameters
+    ----------
+    filename : str
+        The filename to save the video to.
+    framerate : int, default 30
+        The frame rate of the video.
+    crf : int, default 23
+        Constant Rate Factor for encoding quality (lower is better quality).
+    compression_speed : str, default 'medium'
+        Compression speed preset: 'ultrafast', 'superfast', 'veryfast',
+        'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'.
+    codec : Literal['libx264', 'libx265'], default 'libx264'
+        The video codec to use for encoding. Can be any of a number of aliases for
+        these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
+
+    Returns
+    -------
+    VideoWriter
+        The video writer object supporting context manager protocol.
+    """
+    try:
+        import av
+    except ImportError:
+        raise ImportError('Missing optional dependency for video processing,'
+                          ' run `pip install av tqdm`')
+
+    class VideoWriter:
+        def __init__(self, filename, framerate, crf, compression_speed, codec):
+            self.filename = filename
+            self.framerate = framerate
+            self.crf = crf
+            self.compression_speed = compression_speed
+            self.codec = codec_aliases[codec]
+            self.container = av.open(filename, mode='w')
+            self.stream = self.container.add_stream(codec, rate=framerate)
+            self.stream.pix_fmt = 'yuv420p'
+            self.stream.options = {'crf': str(crf), 'preset': compression_speed}
+            self._closed = False
+            self.stream.width = 0
+            self.stream.height = 0
+
+        def write(self, frame):
+            if not isinstance(frame, av.VideoFrame):
+                if frame.ndim == 3 and frame.shape[-1] == 3:
+                    frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
+                elif frame.ndim == 2:
+                    frame = av.VideoFrame.from_ndarray(frame, format='gray')
+                else:
+                    raise ValueError(f'Frame must be (H, W) or (H, W, 3) but was {frame.shape}')
+            if self.stream.width == 0:
+                self.stream.width = frame.width
+            if self.stream.height == 0:
+                self.stream.height = frame.height
+            for packet in self.stream.encode(frame):
+                self.container.mux(packet)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            # Flush stream
+            for packet in self.stream.encode():
+                self.container.mux(packet)
+            self.container.close()
+            self._closed = True
+
+    return VideoWriter(filename, framerate, crf, compression_speed, codec)
+
+
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
-               dim_order='yx', framerate=30, crf=23, compression_speed='medium'):
+               dim_order='yx', framerate=30, crf=23, compression_speed='medium',
+               progress_bar=True, codec: Literal['libx264', 'libx265'] = 'libx264'):
     """
     Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
 
@@ -467,23 +555,57 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         The axis of the data array that will be played as time in the video.
 
     color_axis : int or None, default None
-        If not None, specifies the axis of the color channels (e.g., -1 for last axis, 1 for second axis).
-        If None, data is assumed to be grayscale.
+        If not None, specifies the axis of the color channels (e.g., -1 for last axis,
+        1 for second axis).
+        If None, data must be 3D (greyscale) or 4D with one length 3 axis (RGB).
 
     overwrite : bool, default False
         Whether to overwrite the file if it already exists.
 
     dim_order : 'yx' (default) or 'xy'
         The order of the spatial dimensions in the input data.
+
+    framerate : int, default 30
+        The frame rate of the video.
+
+    crf : int, default 23
+        Constant Rate Factor that specifies amount of lossiness allowed in compression.
+        Lower values produce better quality, larger videos. crf=17 has no human-visible
+        compression artifacts. File size approximately doubles/halves each time you
+        add/subtract 6 from crf, so crf=17 produces files about twice as large as
+        the default crf=23.
+
+    compression_speed : str, default 'medium'
+        Compression speed preset: 'ultrafast', 'superfast', 'veryfast',
+        'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'.
+
+    progress_bar : bool, default True
+        If True, display a progress bar.
+
+    codec : Literal['libx264', 'libx265'], default 'libx264'
+        The video codec to use for encoding. Can be any of a number of aliases for
+        these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
     """
     try:
-        import av
+        from tqdm import tqdm
     except ImportError:
-        raise ImportError('To save videos, you must have PyAV installed. You can install it with "pip install av".')
+        raise ImportError('Missing optional dependency for video processing,'
+                          ' run `pip install av tqdm`')
 
+    filename = os.path.expanduser(str(filename))
+    if filename.split('.')[-1].lower() not in ['mp4', 'mkv', 'avi', 'mov']:
+        filename += '.mp4'
+    if os.path.exists(filename) and not overwrite:
+        raise FileExistsError(f'File {filename} already exists. '
+                              'Set overwrite=True to overwrite.')
+
+    if color_axis is None and data.ndim == 4:
+        color_axis = find_channel_axis(data, possible_channel_lengths=3)
+        if color_axis is None:
+            raise ValueError('4D input data must have an RGB (length 3) axis.')
     if color_axis is not None:
         if data.ndim != 4:
-            raise ValueError('Input data must be a 4D numpy array for color video.')
+            raise ValueError('Input data must be 4D when color_axis is specified.')
         # Move time axis to 0, color axis to -1
         data = np.moveaxis(data, time_axis, 0)
         if color_axis != -1:
@@ -493,22 +615,16 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         n_frames = data.shape[0]
         height, width, channels = data.shape[1:]
         if channels != 3:
-            raise ValueError('Color video must have 3 channels (RGB).')
+            raise ValueError(f'Color video must have 3 channels (RGB) but had {channels}.')
     else:
         if data.ndim != 3:
-            raise ValueError('Input data must be a 3D numpy array for grayscale video.')
+            raise ValueError('Input data must be 3D when color_axis is not specified.')
         data = np.moveaxis(data, time_axis, 0)
         if 'xy' in dim_order:
             data = data.swapaxes(1, 2)
         n_frames = data.shape[0]
         height, width = data.shape[1:]
 
-    filename = os.path.expanduser(str(filename))
-    if filename.split('.')[-1].lower() not in ['mp4', 'mkv', 'avi', 'mov']:
-        filename += '.mp4'
-    if os.path.exists(filename) and not overwrite:
-        raise FileExistsError(f'File {filename} already exists. '
-                              'Set overwrite=True to overwrite.')
     extension = filename.split('.')[-1].lower()
     if extension == 'mp4':
         pad = [[0, 0], [0, 0], [0, 0]]
@@ -519,25 +635,11 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         if pad != [[0, 0], [0, 0], [0, 0]]:
             data = np.pad(data, pad, mode='edge')
 
-    container = av.open(filename, mode='w')
-    stream = container.add_stream('libx264', rate=framerate)
-    stream.pix_fmt = 'yuv420p'
-    stream.options = {'crf': str(crf), 'preset': compression_speed}
-    stream.height = data.shape[1]
-    stream.width = data.shape[2]
-
-    for frame_i in range(n_frames):
-        if color_axis is not None:
-            frame = av.VideoFrame.from_ndarray(data[frame_i], format='rgb24')
-        else:
-            frame = av.VideoFrame.from_ndarray(data[frame_i], format='gray')
-        for packet in stream.encode(frame):
-            container.mux(packet)
-
-    for packet in stream.encode():
-        container.mux(packet)
-
-    container.close()
+    with video_writer(filename, framerate=framerate, crf=crf,
+                      compression_speed=compression_speed, codec=codec) as writer:
+        for frame_i in tqdm(range(n_frames), total=n_frames,
+                            desc='Saving video', disable=not progress_bar):
+            writer.write(data[frame_i])
 
 
 def show(data,
@@ -610,7 +712,9 @@ def show(data,
 imshow = show  # Function name alias
 
 
-def find_channel_axis(data, expected_channel_axis=[0, -1]):
+def find_channel_axis(data,
+                      possible_channel_axes=[-1, 0],
+                      possible_channel_lengths=[2, 3, 4]):
     """
     If the given numpy array has a shape suggesting that it has a
     channel (color) axis (that is, any axis with length 2 (2-color),
@@ -621,23 +725,28 @@ def find_channel_axis(data, expected_channel_axis=[0, -1]):
     data : numpy.ndarray
         The numpy array to check for a channel axis.
 
-    expected_channel_axis : int or list of int, default [0, -1]
+    possible_channel_axes : int or list of int, default [0, -1]
         If None, any axis having length 2, 3, or 4 will be considered
         a channel axis.
         If an int, only that axis index will be checked.
         If a list of ints, all axes with those indices will be checked.
-        The default value of [0, -1] checks the first and last axes, which is
+        The default value of [-1, 0] checks the last and first axes, which is
         almost always where a channel axis will be found.
+
+    possible_channel_lengths : int or list of int, default [2, 3, 4]
+        If an int, only that length will be considered a channel axis.
+        If a list of ints, an axis with any of those lengths will be considered
+        a channel axis.
 
     Returns
     -------
     int or None
         The index of the channel axis, or None if no channel axis was found.
 
-        If expected_channel_axis is given, the returned value will be one of
-        the expected_channel_axis values, or None if no channel axis was found.
+        If possible_channel_axes is given, the returned value will be one of
+        the possible_channel_axes values, or None if no channel axis was found.
 
-        If expected_channel_axis is None, the returned value will be between
+        If possible_channel_axes is None, the returned value will be between
         0 and data.ndim - 1, inclusive, or None if no channel axis was found.
 
         Note that returning 0 means the channel axis was found and is the first
@@ -645,12 +754,14 @@ def find_channel_axis(data, expected_channel_axis=[0, -1]):
         because 0 will evaluate to False even though the data has a channel axis.
         Instead write `if find_channel_axis(data) is not None:`
     """
-    if isinstance(expected_channel_axis, int):
-        expected_channel_axis = [expected_channel_axis]
-    if expected_channel_axis is None:
-        expected_channel_axis = range(data.ndim)
-    for axis in expected_channel_axis:
-        if data.shape[axis] in [2, 3, 4]:
+    if isinstance(possible_channel_axes, int):
+        possible_channel_axes = [possible_channel_axes]
+    if possible_channel_axes is None:
+        possible_channel_axes = range(data.ndim)
+    if isinstance(possible_channel_lengths, int):
+        possible_channel_lengths = [possible_channel_lengths]
+    for axis in possible_channel_axes:
+        if data.shape[axis] in possible_channel_lengths:
             return axis
     return None
 
