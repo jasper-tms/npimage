@@ -9,7 +9,7 @@ Function list:
 - show(np_array) -> Displays a numpy array of pixel values as an image
 """
 
-from typing import Literal
+from typing import Literal, Union, Tuple, Iterator
 import os
 import glob
 from builtins import open as builtin_open
@@ -24,7 +24,7 @@ supported_extensions = [
 ]
 
 
-def load(filename, dim_order='zyx', **kwargs):
+def load(filename, dim_order='zyx', **kwargs) -> Union[np.ndarray, Tuple[np.ndarray, dict]]:
     """
     Open a 2D or 3D image file and return its pixel values as a numpy array.
 
@@ -52,16 +52,16 @@ def load(filename, dim_order='zyx', **kwargs):
 
     if extension in ['jpg', 'jpeg', 'png']:
         from PIL import Image
-        data = np.array(Image.open(filename)) #PIL.Image.open returns zyx order
+        data = np.array(Image.open(filename))  # PIL.Image.open returns zyx order
 
     if extension == 'heic':
         _ensure_heif_opener_registered()
         from PIL import Image
-        data = np.array(Image.open(filename)) #PIL.Image.open returns zyx order
+        data = np.array(Image.open(filename))  # PIL.Image.open returns zyx order
 
     if extension in ['tif', 'tiff']:
         import tifffile
-        data = tifffile.imread(filename) #tifffile.imread returns zyx order
+        data = tifffile.imread(filename)  # tifffile.imread returns zyx order
 
     if extension == 'pbm':
         from .filetypes import pbm
@@ -151,7 +151,7 @@ def save(data,
          units=None,
          compress=None,
          compression_level=3,
-         metadata=None):
+         metadata=None) -> None:
     """
     Save a numpy array to file with a file type specified by the
     filename extension.
@@ -357,7 +357,6 @@ def save(data,
 
         vol[:] = data
 
-
 write = save  # Function name alias
 to_file = save  # Function name alias
 
@@ -420,7 +419,7 @@ def load_video(filename,
             return data
 
 
-def lazy_load_video(filename):
+def lazy_load_video(filename) -> Iterator[np.ndarray]:
     """
     Lazily load video frames as numpy arrays using PyAV.
 
@@ -461,7 +460,7 @@ codec_aliases = {
 
 
 def video_writer(filename, framerate=30, crf=23, compression_speed='medium',
-                 codec: Literal['libx264', 'libx265'] = 'libx264'):
+                 codec: Literal['libx264', 'libx265'] = 'libx264') -> 'VideoWriter':
     """
     Create a video writer object for saving frames to a video file.
 
@@ -536,7 +535,7 @@ def video_writer(filename, framerate=30, crf=23, compression_speed='medium',
 
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
                dim_order='yx', framerate=30, crf=23, compression_speed='medium',
-               progress_bar=True, codec: Literal['libx264', 'libx265'] = 'libx264'):
+               progress_bar=True, codec: Literal['libx264', 'libx265'] = 'libx264') -> None:
     """
     Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
 
@@ -648,7 +647,7 @@ def show(data,
          mode: Literal['PIL', 'mpl'] = 'PIL',
          convert_to_8bit=True,
          channel_axis='guess',
-         **kwargs):
+         **kwargs) -> None:
     """
     Display a numpy array of pixel values as an image. Supported types:
       1-channel (grayscale) : data.shape must be (y, x)
@@ -714,7 +713,7 @@ imshow = show  # Function name alias
 
 def find_channel_axis(data,
                       possible_channel_axes=[-1, 0],
-                      possible_channel_lengths=[2, 3, 4]):
+                      possible_channel_lengths=[2, 3, 4]) -> Union[int, None]:
     """
     If the given numpy array has a shape suggesting that it has a
     channel (color) axis (that is, any axis with length 2 (2-color),
@@ -768,13 +767,10 @@ def find_channel_axis(data,
 
 # Flag to track if HEIF opener has been registered
 _heif_opener_registered = False
-
-
-def _ensure_heif_opener_registered():
+def _ensure_heif_opener_registered() -> None:
     """Register the HEIF opener if not already registered."""
     global _heif_opener_registered
     if not _heif_opener_registered:
         from pillow_heif import register_heif_opener
         register_heif_opener()
         _heif_opener_registered = True
-
