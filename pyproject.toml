@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'numpyimage'
-version = '2.4.3'
+version = '2.5.0'
 description = 'Load, save, & manipulate image files as numpy arrays'
 readme.file = 'README.md'
 readme.content-type = 'text/markdown'
@@ -28,6 +28,12 @@ dependencies = [
     'pynrrd',
     'matplotlib',
     'opencv-python-headless',
+]
+
+[project.optional-dependencies]
+all = [
+    "tqdm",
+    "av"
 ]
 
 [tool.setuptools.packages.find]
