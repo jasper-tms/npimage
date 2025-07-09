@@ -686,7 +686,7 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
 
         if debug_frequency is not None and iteration % debug_frequency == 0:
             print(f'Writing iteration{iteration}.nrrd')
-            from .core import save
+            from .imageio import save
             save(image, f'iteration{iteration}.nrrd')
 
         #recurseifneighbors

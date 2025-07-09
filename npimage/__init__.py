@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-from .core import *
+from .imageio import *
+from .vidio import *
+
 from .operations import *
 from .align import *
 from .graphics import *
