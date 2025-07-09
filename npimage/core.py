@@ -409,8 +409,10 @@ def load_video(filename,
         data = np.empty((num_frames, *first_img.shape), dtype=first_img.dtype)
         # Then fill it up frame by frame
         data[0] = first_img
-        for i, frame in tqdm(enumerate(frame_iter, start=1), total=num_frames,
+        for i, frame in tqdm(enumerate(frame_iter), total=num_frames,
                              desc='Loading video', disable=not progress_bar):
+            if i == 0:
+                continue
             img = frame.to_ndarray(format='rgb24')
             data[i] = img
         if return_framerate:
@@ -479,13 +481,18 @@ class VideoWriter:
         these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
     """
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
-                 codec: Literal['libx264', 'libx265'] = 'libx264'):
+                 codec: Literal['libx264', 'libx265'] = 'libx264',
+                 overwrite=False):
         try:
             import av
         except ImportError:
             raise ImportError('Missing optional dependency for video processing,'
                               ' run `pip install av tqdm`')
         self.av = av
+        filename = os.path.expanduser(str(filename))
+        if os.path.exists(filename) and not overwrite:
+            raise FileExistsError(f'File {filename} already exists. '
+                                  'Set overwrite=True to overwrite.')
         self.filename = filename
         self.framerate = framerate
         self.crf = crf
@@ -627,7 +634,8 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
             data = np.pad(data, pad, mode='edge')
 
     with VideoWriter(filename, framerate=framerate, crf=crf,
-                     compression_speed=compression_speed, codec=codec) as writer:
+                     compression_speed=compression_speed, codec=codec,
+                     overwrite=overwrite) as writer:
         for frame_i in tqdm(range(n_frames), total=n_frames,
                             desc='Saving video', disable=not progress_bar):
             writer.write(data[frame_i])
