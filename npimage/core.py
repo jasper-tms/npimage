@@ -459,8 +459,7 @@ codec_aliases = {
 }
 
 
-def video_writer(filename, framerate=30, crf=23, compression_speed='medium',
-                 codec: Literal['libx264', 'libx265'] = 'libx264') -> 'VideoWriter':
+class VideoWriter:
     """
     Create a video writer object for saving frames to a video file.
 
@@ -478,59 +477,52 @@ def video_writer(filename, framerate=30, crf=23, compression_speed='medium',
     codec : Literal['libx264', 'libx265'], default 'libx264'
         The video codec to use for encoding. Can be any of a number of aliases for
         these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
-
-    Returns
-    -------
-    VideoWriter
-        The video writer object supporting context manager protocol.
     """
-    try:
-        import av
-    except ImportError:
-        raise ImportError('Missing optional dependency for video processing,'
-                          ' run `pip install av tqdm`')
+    def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
+                 codec: Literal['libx264', 'libx265'] = 'libx264'):
+        try:
+            import av
+        except ImportError:
+            raise ImportError('Missing optional dependency for video processing,'
+                              ' run `pip install av tqdm`')
+        self.av = av
+        self.filename = filename
+        self.framerate = framerate
+        self.crf = crf
+        self.compression_speed = compression_speed
+        self.codec = codec_aliases[codec.lower()]
+        self.container = av.open(filename, mode='w')
+        self.stream = self.container.add_stream(self.codec, rate=framerate)
+        self.stream.pix_fmt = 'yuv420p'
+        self.stream.options = {'crf': str(crf), 'preset': compression_speed}
+        self._closed = False
+        self.stream.width = 0
+        self.stream.height = 0
 
-    class VideoWriter:
-        def __init__(self, filename, framerate, crf, compression_speed, codec):
-            self.filename = filename
-            self.framerate = framerate
-            self.crf = crf
-            self.compression_speed = compression_speed
-            self.codec = codec_aliases[codec]
-            self.container = av.open(filename, mode='w')
-            self.stream = self.container.add_stream(codec, rate=framerate)
-            self.stream.pix_fmt = 'yuv420p'
-            self.stream.options = {'crf': str(crf), 'preset': compression_speed}
-            self._closed = False
-            self.stream.width = 0
-            self.stream.height = 0
+    def write(self, frame):
+        if not isinstance(frame, self.av.VideoFrame):
+            if frame.ndim == 3 and frame.shape[-1] == 3:
+                frame = self.av.VideoFrame.from_ndarray(frame, format='rgb24')
+            elif frame.ndim == 2:
+                frame = self.av.VideoFrame.from_ndarray(frame, format='gray')
+            else:
+                raise ValueError(f'Frame must be (H, W) or (H, W, 3) but was {frame.shape}')
+        if self.stream.width == 0:
+            self.stream.width = frame.width
+        if self.stream.height == 0:
+            self.stream.height = frame.height
+        for packet in self.stream.encode(frame):
+            self.container.mux(packet)
 
-        def write(self, frame):
-            if not isinstance(frame, av.VideoFrame):
-                if frame.ndim == 3 and frame.shape[-1] == 3:
-                    frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
-                elif frame.ndim == 2:
-                    frame = av.VideoFrame.from_ndarray(frame, format='gray')
-                else:
-                    raise ValueError(f'Frame must be (H, W) or (H, W, 3) but was {frame.shape}')
-            if self.stream.width == 0:
-                self.stream.width = frame.width
-            if self.stream.height == 0:
-                self.stream.height = frame.height
-            for packet in self.stream.encode(frame):
-                self.container.mux(packet)
+    def __enter__(self):
+        return self
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            # Flush stream
-            for packet in self.stream.encode():
-                self.container.mux(packet)
-            self.container.close()
-            self._closed = True
-
-    return VideoWriter(filename, framerate, crf, compression_speed, codec)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Flush stream
+        for packet in self.stream.encode():
+            self.container.mux(packet)
+        self.container.close()
+        self._closed = True
 
 
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
@@ -634,8 +626,8 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         if pad != [[0, 0], [0, 0], [0, 0]]:
             data = np.pad(data, pad, mode='edge')
 
-    with video_writer(filename, framerate=framerate, crf=crf,
-                      compression_speed=compression_speed, codec=codec) as writer:
+    with VideoWriter(filename, framerate=framerate, crf=crf,
+                     compression_speed=compression_speed, codec=codec) as writer:
         for frame_i in tqdm(range(n_frames), total=n_frames,
                             desc='Saving video', disable=not progress_bar):
             writer.write(data[frame_i])
