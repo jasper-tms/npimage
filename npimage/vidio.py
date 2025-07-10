@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Functions for reading, writing, and showing images.
+Functions for reading and writing videos.
 
 Function list:
 - load_video(filename) -> np.ndarray
 - lazy_load_video(filename) -> Iterator[np.ndarray]
 - save_video(data, filename) -> Saves a 3D numpy array as a video
+
+Class list:
+- VideoStreamer: Provides fast random access to frames in a video file
+  via VideoStreamer[frame_number]
+- VideoWriter: Allows writing frames one-by-one to a video file via
+  VideoWriter.write(image). This can be advantageous compared to save_video
+  when you don't want to ever have to have all the frames in memory at once.
 
 """
 
