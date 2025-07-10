@@ -170,11 +170,14 @@ class VideoStreamer:
         time_index = [float(frame['pkt_pts_time']) for frame in frames]
         if len(time_index) == 0:
             raise RuntimeError("No frames found in video")
+
         self.n_frames = len(time_index)
         self.t0 = time_index[0]
+        self.rotation = _detect_rotation(self.filename)
         index = {
             'n_frames': self.n_frames,
             't0': self.t0,
+            'rotation': self.rotation,
         }
 
         # Determine whether the video is constant or variable framerate
@@ -199,6 +202,7 @@ class VideoStreamer:
             index = json.load(f)
         self.n_frames = index['n_frames']
         self.t0 = index['t0']
+        self.rotation = index.get('rotation', None)
 
         if not isinstance(index['timestep'], (str, float, int)):
             raise ValueError('Malformed index: timestep is not a string or number')
@@ -233,7 +237,7 @@ class VideoStreamer:
         Provides access to random frames as fast as is reasonable when getting
         frames from compressed video in python.
         """
-        
+
         def decode_until(frame_number) -> np.ndarray:
             """
             Decode forward from the current frame in the stream until we get
@@ -270,7 +274,7 @@ class VideoStreamer:
                 self.container.seek(seek_time, any_frame=False,
                                     backward=True, stream=self.stream)
             # Now we decode frames forward until we get to the requested frame
-            return decode_until(frame_number)
+            return _rotate(decode_until(frame_number), self.rotation)
 
     @property
     def average_timestep(self):
@@ -504,3 +508,70 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         for frame_i in tqdm(range(n_frames), total=n_frames,
                             desc='Saving video', disable=not progress_bar):
             writer.write(data[frame_i])
+
+
+def _detect_rotation(filename):
+    """
+    Detect rotation metadata from the video file using ffprobe.
+    Returns the rotation angle as a string (e.g., '90', '180', '270'), or None if not present.
+    """
+    import subprocess
+    import json
+    cmd = [
+        'ffprobe',
+        '-v', 'quiet',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream_tags=rotate',
+        '-of', 'json',
+        str(filename)
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout)
+        streams = data.get('streams', [])
+        if streams and 'tags' in streams[0]:
+            rotate_tag = streams[0]['tags'].get('rotate')
+            if rotate_tag:
+                return rotate_tag
+    except (json.JSONDecodeError, KeyError, ValueError):
+        pass
+    return None
+
+
+def _rotate(data: np.ndarray, rotation: Union[str, int, None] = 0) -> np.ndarray:
+    """
+    Apply clockwise rotation to a numpy array
+
+    Parameters
+    ----------
+    data : np.ndarray
+        The numpy array to rotate.
+    rotation : str, int, or None, default 0
+        The rotation angle in degrees, as a string or integer.
+        Valid values are 0, 90, 180, 270, or 360.
+        If None, 0, or 360, no rotation is applied.
+
+    TODO find an actual video file with rotation_tag of 90 or 270 and check that
+    the rotation is applied in the right direction. If it's opposite the correct
+    direction, remove axes=(1, 0) from the np.rot90 calls in this function.
+    """
+    if rotation is None:
+        return data
+    try:
+        rotation = int(rotation)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid rotation value: {rotation}")
+
+    if rotation in [0, 360]:
+        return data
+    if rotation == 90:
+        return np.rot90(data, k=1, axes=(1, 0))
+    elif rotation == 180:
+        return np.rot90(data, k=2, axes=(1, 0))
+    elif rotation == 270:
+        return np.rot90(data, k=3, axes=(1, 0))
+    else:
+        raise ValueError(f"Invalid rotation value: {rotation}")
