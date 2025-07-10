@@ -134,7 +134,7 @@ class VideoStreamer:
         self.filename = Path(filename)
         if not self.filename.exists():
             raise FileNotFoundError(f"File {filename} not found")
-        self.index_filename = Path(str(filename).replace('.mp4', '_index.json'))
+        self.index_filename = self.filename.parent / (self.filename.stem + '_index.json')
         self._load_index()
 
         self.container = av.open(str(self.filename))
@@ -187,9 +187,9 @@ class VideoStreamer:
     def _load_index(self):
         if not self.index_filename.exists():
             self._build_index()
-        else:
-            with open(self.index_filename, 'r') as f:
-                index = json.load(f)
+
+        with open(self.index_filename, 'r') as f:
+            index = json.load(f)
         self.n_frames = index['n_frames']
         self.t0 = index['t0']
 
@@ -264,6 +264,16 @@ class VideoStreamer:
                                     backward=True, stream=self.stream)
             # Now we decode frames forward until we get to the requested frame
             return decode_until(frame_number)
+
+    @property
+    def average_timestep(self):
+        """
+        Returns the average time step between frames.
+        """
+        if self.timestep == 'variable':
+            return (self.time_index[-1] - self.time_index[0]) / (self.n_frames - 1)
+        else:
+            return self.timestep
 
     @property
     def first_frame(self):
