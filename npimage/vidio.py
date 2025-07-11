@@ -149,6 +149,10 @@ class VideoStreamer:
         self.time_base = self.stream.time_base
         self._shape = None
         self._first_frame = None
+        self._width = None
+        self._height = None
+        self._ndim = None
+        self._dtype = None
         self._current_frame_number = None
         self._lock = threading.Lock()
 
@@ -300,12 +304,28 @@ class VideoStreamer:
         return self._shape
 
     @property
+    def width(self):
+        if self._width is None:
+            self._width = self.first_frame.shape[1]
+        return self._width
+
+    @property
+    def height(self):
+        if self._height is None:
+            self._height = self.first_frame.shape[0]
+        return self._height
+
+    @property
     def ndim(self):
-        return len(self.shape)
+        if self._ndim is None:
+            self._ndim = len(self.shape)
+        return self._ndim
 
     @property
     def dtype(self):
-        return self.first_frame.dtype
+        if self._dtype is None:
+            self._dtype = self.first_frame.dtype
+        return self._dtype
 
     def __len__(self):
         return self.n_frames
