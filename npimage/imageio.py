@@ -15,7 +15,7 @@ from builtins import open as builtin_open
 
 import numpy as np
 
-from . import operations, utils
+from . import vidio, operations, utils
 
 supported_extensions = [
     'tif', 'tiff', 'jpg', 'jpeg', 'png', 'pbm',
@@ -43,7 +43,9 @@ def load(filename, dim_order='zyx', **kwargs) -> Union[np.ndarray, Tuple[np.ndar
         raise ValueError('Could not determine file format from filename'
                          f' "{filename}". Please specify the file type via'
                          ' the `format` argument, e.g. format="tif"')
-    if extension not in supported_extensions:
+    if extension in vidio.supported_extensions:
+        return vidio.VideoStreamer(filename)
+    elif extension not in supported_extensions:
         raise ValueError(f'File format of "{filename}" not supported/recognized.')
 
     data = None
@@ -178,7 +180,7 @@ def save(data,
               '.nrrd. Whether or not compression occurs now will depend on '
               'the format you are saving to.')
 
-    channel_axis = find_channel_axis(data)
+    channel_axis = utils.find_channel_axis(data)
     if 'xy' in dim_order:
         data = data.T
         if hasattr(pixel_size, '__iter__') and not isinstance(pixel_size, str):
@@ -392,7 +394,7 @@ def show(data,
     if data_type == 'segmentation':
         data = utils.assign_random_colors(data, seed=kwargs.get('seed', None))
 
-    if (not data.ndim == 2) and not (data.ndim == 3 and find_channel_axis(data) is not None):
+    if (not data.ndim == 2) and not (data.ndim == 3 and utils.find_channel_axis(data) is not None):
         m = ('Data must have shape (y, x) for grayscale, '
              '(y, x, 3) for RGB, or (y, x, 4) for RGBA but had '
              f'shape {data.shape}')
@@ -403,9 +405,9 @@ def show(data,
     if 'xy' in dim_order:
         data = data.T
     if channel_axis == 'guess':
-        channel_axis = find_channel_axis(data)
+        channel_axis = utils.find_channel_axis(data)
     if utils.isint(channel_axis) and channel_axis != -1:
-        data = np.moveaxis(data, find_channel_axis(data), -1)
+        data = np.moveaxis(data, utils.find_channel_axis(data), -1)
 
     if convert_to_8bit and data.dtype != np.uint8:
         data = operations.to_8bit(data)
@@ -428,60 +430,6 @@ def show(data,
         plt.show()
 
 imshow = show  # Function name alias
-
-
-def find_channel_axis(data,
-                      possible_channel_axes=[-1, 0],
-                      possible_channel_lengths=[2, 3, 4]) -> Union[int, None]:
-    """
-    If the given numpy array has a shape suggesting that it has a
-    channel (color) axis (that is, any axis with length 2 (2-color),
-    3 (RGB), or 4 (RGBA)), return the index of that axis.
-
-    Parameters
-    ----------
-    data : numpy.ndarray
-        The numpy array to check for a channel axis.
-
-    possible_channel_axes : int or list of int, default [0, -1]
-        If None, any axis having length 2, 3, or 4 will be considered
-        a channel axis.
-        If an int, only that axis index will be checked.
-        If a list of ints, all axes with those indices will be checked.
-        The default value of [-1, 0] checks the last and first axes, which is
-        almost always where a channel axis will be found.
-
-    possible_channel_lengths : int or list of int, default [2, 3, 4]
-        If an int, only that length will be considered a channel axis.
-        If a list of ints, an axis with any of those lengths will be considered
-        a channel axis.
-
-    Returns
-    -------
-    int or None
-        The index of the channel axis, or None if no channel axis was found.
-
-        If possible_channel_axes is given, the returned value will be one of
-        the possible_channel_axes values, or None if no channel axis was found.
-
-        If possible_channel_axes is None, the returned value will be between
-        0 and data.ndim - 1, inclusive, or None if no channel axis was found.
-
-        Note that returning 0 means the channel axis was found and is the first
-        axis, so be careful not to do a test like `if find_channel_axis(data):`
-        because 0 will evaluate to False even though the data has a channel axis.
-        Instead write `if find_channel_axis(data) is not None:`
-    """
-    if isinstance(possible_channel_axes, int):
-        possible_channel_axes = [possible_channel_axes]
-    if possible_channel_axes is None:
-        possible_channel_axes = range(data.ndim)
-    if isinstance(possible_channel_lengths, int):
-        possible_channel_lengths = [possible_channel_lengths]
-    for axis in possible_channel_axes:
-        if data.shape[axis] in possible_channel_lengths:
-            return axis
-    return None
 
 
 # Flag to track if HEIF opener has been registered

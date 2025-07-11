@@ -25,7 +25,7 @@ import json
 
 import numpy as np
 
-from .imageio import find_channel_axis
+from . import utils
 
 codec_aliases = {
     "libx264": "libx264",
@@ -39,6 +39,8 @@ codec_aliases = {
     "h265": "libx265",
     "H.265": "libx265",
 }
+
+supported_extensions = ['mp4', 'mkv', 'avi', 'mov']
 
 
 def load_video(filename,
@@ -480,14 +482,14 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
                           ' run `pip install av tqdm`')
 
     filename = os.path.expanduser(str(filename))
-    if filename.split('.')[-1].lower() not in ['mp4', 'mkv', 'avi', 'mov']:
+    if filename.split('.')[-1].lower() not in supported_extensions:
         filename += '.mp4'
     if os.path.exists(filename) and not overwrite:
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
 
     if color_axis is None and data.ndim == 4:
-        color_axis = find_channel_axis(data, possible_channel_lengths=3)
+        color_axis = utils.find_channel_axis(data, possible_channel_lengths=3)
         if color_axis is None:
             raise ValueError('4D input data must have an RGB (length 3) axis.')
     if color_axis is not None:

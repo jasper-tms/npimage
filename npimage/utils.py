@@ -11,6 +11,7 @@ Function list:
 - transpose_metadata (reverse the order of all per-axis metadata values)
 """
 
+from typing import Union
 from collections import OrderedDict
 
 import numpy as np
@@ -54,6 +55,60 @@ def isint(n):
                 for a in n]
     except TypeError:
         return isinstance(n, int) or np.issubdtype(type(n), np.integer)
+
+
+def find_channel_axis(data,
+                      possible_channel_axes=[-1, 0],
+                      possible_channel_lengths=[2, 3, 4]) -> Union[int, None]:
+    """
+    If the given numpy array has a shape suggesting that it has a
+    channel (color) axis (that is, any axis with length 2 (2-color),
+    3 (RGB), or 4 (RGBA)), return the index of that axis.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        The numpy array to check for a channel axis.
+
+    possible_channel_axes : int or list of int, default [0, -1]
+        If None, any axis having length 2, 3, or 4 will be considered
+        a channel axis.
+        If an int, only that axis index will be checked.
+        If a list of ints, all axes with those indices will be checked.
+        The default value of [-1, 0] checks the last and first axes, which is
+        almost always where a channel axis will be found.
+
+    possible_channel_lengths : int or list of int, default [2, 3, 4]
+        If an int, only that length will be considered a channel axis.
+        If a list of ints, an axis with any of those lengths will be considered
+        a channel axis.
+
+    Returns
+    -------
+    int or None
+        The index of the channel axis, or None if no channel axis was found.
+
+        If possible_channel_axes is given, the returned value will be one of
+        the possible_channel_axes values, or None if no channel axis was found.
+
+        If possible_channel_axes is None, the returned value will be between
+        0 and data.ndim - 1, inclusive, or None if no channel axis was found.
+
+        Note that returning 0 means the channel axis was found and is the first
+        axis, so be careful not to do a test like `if find_channel_axis(data):`
+        because 0 will evaluate to False even though the data has a channel axis.
+        Instead write `if find_channel_axis(data) is not None:`
+    """
+    if isinstance(possible_channel_axes, int):
+        possible_channel_axes = [possible_channel_axes]
+    if possible_channel_axes is None:
+        possible_channel_axes = range(data.ndim)
+    if isinstance(possible_channel_lengths, int):
+        possible_channel_lengths = [possible_channel_lengths]
+    for axis in possible_channel_axes:
+        if data.shape[axis] in possible_channel_lengths:
+            return axis
+    return None
 
 
 def transpose_metadata(metadata: dict or OrderedDict,
