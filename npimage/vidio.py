@@ -60,8 +60,13 @@ def load_video(filename,
 
     Returns
     -------
-    data : numpy.ndarray
-        The video frames as a numpy array, shape (num_frames, height, width, colors)
+    If return_framerate is False:
+        data : numpy.ndarray
+            The video frames as a numpy array, shape (num_frames, height, width, colors)
+    If return_framerate is True:
+        (data, framerate) : tuple, where data is as above and:
+        framerate : float
+            The frame rate of the video in frames per second
     """
     try:
         import av
@@ -360,7 +365,7 @@ class VideoWriter:
     ----------
     filename : str
         The filename to save the video to.
-    framerate : int, default 30
+    framerate : int or float, default 30
         The frame rate of the video.
     crf : int, default 23
         Constant Rate Factor for encoding quality (lower is better quality).
