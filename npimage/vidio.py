@@ -385,6 +385,7 @@ class VideoWriter:
             raise ImportError('Missing optional dependency for video processing,'
                               ' run `pip install av tqdm`')
         self.av = av
+        from fractions import Fraction
         filename = os.path.expanduser(str(filename))
         if os.path.exists(filename) and not overwrite:
             raise FileExistsError(f'File {filename} already exists. '
@@ -395,7 +396,7 @@ class VideoWriter:
         self.compression_speed = compression_speed
         self.codec = codec_aliases[codec.lower()]
         self.container = av.open(filename, mode='w')
-        self.stream = self.container.add_stream(self.codec, rate=framerate)
+        self.stream = self.container.add_stream(self.codec, rate=Fraction(framerate))
         self.stream.pix_fmt = 'yuv420p'
         self.stream.options = {'crf': str(crf), 'preset': compression_speed}
         self._closed = False
