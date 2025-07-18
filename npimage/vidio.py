@@ -391,12 +391,21 @@ class VideoWriter:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
-        self.framerate = framerate
+        self.framerate = str(framerate)  # str instead of float to avoid precision issues
+        while Fraction(self.framerate).denominator >= 2**32 or Fraction(self.framerate).numerator >= 2**32:
+            # If framerate has too many decimals to be expressed as a
+            # ratio of 32-bit ints, which is required by ffmpeg, crop
+            # off one decimal point of precision until it is expressable
+            self.framerate = self.framerate[:-1]
+            if self.framerate[-1] == '.':
+                self.framerate = self.framerate[:-1]
+            if len(self.framerate) == 0:
+                raise RuntimeError('Error occurred handling framerate argument')
         self.crf = crf
         self.compression_speed = compression_speed
         self.codec = codec_aliases[codec.lower()]
         self.container = av.open(filename, mode='w')
-        self.stream = self.container.add_stream(self.codec, rate=Fraction(framerate))
+        self.stream = self.container.add_stream(self.codec, rate=Fraction(self.framerate))
         self.stream.pix_fmt = 'yuv420p'
         self.stream.options = {'crf': str(crf), 'preset': compression_speed}
         self._closed = False
@@ -407,10 +416,14 @@ class VideoWriter:
         if not isinstance(frame, self.av.VideoFrame):
             if frame.ndim == 3 and frame.shape[-1] == 3:
                 frame = self.av.VideoFrame.from_ndarray(frame, format='rgb24')
+            elif frame.ndim == 3 and frame.shape[-1] == 4:
+                # While some video codecs support an alpha channel, most don't,
+                # so for now we're just going to ignore the alpha channel
+                frame = self.av.VideoFrame.from_ndarray(frame[..., :3], format='rgb24')
             elif frame.ndim == 2:
                 frame = self.av.VideoFrame.from_ndarray(frame, format='gray')
             else:
-                raise ValueError(f'Frame must be (H, W) or (H, W, 3) but was {frame.shape}')
+                raise ValueError(f'Frame must be (H, W) (H, W, 3) or (H, W, 4) but was {frame.shape}')
         if self.stream.width == 0:
             self.stream.width = frame.width
         if self.stream.height == 0:
