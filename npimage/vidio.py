@@ -271,8 +271,15 @@ class VideoStreamer:
             start, stop, step = frame_number.indices(self.n_frames)
             return np.array([self._get_frame(i) for i in range(start, stop, step)])
         with self._lock:
-            if frame_number < 0 or frame_number >= self.n_frames:
-                raise IndexError(f"Frame {frame_number} out of range: [0, {self.n_frames})")
+            # Support negative indexing
+            if frame_number < 0 and frame_number + self.n_frames >= 0:
+                frame_number += self.n_frames
+            elif frame_number >= self.n_frames:
+                raise IndexError(f"Frame {frame_number} out of range:"
+                                 f" [0, {self.n_frames-1}]")
+            elif frame_number < 0:
+                raise IndexError(f"Negative frame {frame_number} out of"
+                                 f" range: [-{self.n_frames}, -1]")
 
             if (self._current_frame_number is None
                     or frame_number <= self._current_frame_number
