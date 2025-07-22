@@ -96,12 +96,17 @@ def load_video(filename,
         data = np.empty((num_frames, *first_img.shape), dtype=first_img.dtype)
         # Then fill it up frame by frame
         data[0] = first_img
+        container.seek(0, stream=stream)
         for i, frame in tqdm(enumerate(frame_iter), total=num_frames,
                              desc='Loading video', disable=not progress_bar):
-            if i == 0:
-                continue
             img = frame.to_ndarray(format='rgb24')
+            if i == 0 and not np.array_equal(img, first_img):
+                raise RuntimeError('PyAV seek failed. Please report how this happened'
+                                   ' at github.com/jasper-tms/npimage/issues')
             data[i] = img
+        if (data[-1] == 0).all():
+            print('WARNING: Last frame of video is all zeros, this may'
+                  ' indicate an error in video loading unless you expected this.')
         if return_framerate:
             return data, float(stream.average_rate)
         else:
