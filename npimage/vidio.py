@@ -404,7 +404,7 @@ class VideoWriter:
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
         self.framerate = str(framerate)  # str instead of float to avoid precision issues
-        while Fraction(self.framerate).denominator >= 2**32 or Fraction(self.framerate).numerator >= 2**32:
+        while Fraction(self.framerate).denominator >= 2**31 or Fraction(self.framerate).numerator >= 2**31:
             # If framerate has too many decimals to be expressed as a
             # ratio of 32-bit ints, which is required by ffmpeg, crop
             # off one decimal point of precision until it is expressable
