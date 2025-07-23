@@ -310,6 +310,20 @@ class VideoStreamer:
             return self.timestep
 
     @property
+    def framerate(self):
+        """
+        Returns the frame rate of the video in frames per second.
+        """
+        if self.timestep == 'variable':
+            return 1 / self.average_timestep
+        else:
+            return 1 / self.timestep
+
+    @property
+    def fps(self):
+        return self.framerate
+
+    @property
     def first_frame(self):
         if self._first_frame is None:
             self._first_frame = self[0]
