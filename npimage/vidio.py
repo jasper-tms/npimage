@@ -440,7 +440,13 @@ class VideoWriter:
 
     def write(self, frame):
         if not isinstance(frame, self.av.VideoFrame):
-            if frame.ndim == 3 and frame.shape[-1] == 3:
+            if not isinstance(frame, np.ndarray):
+                frame = np.array(frame)
+            if frame.ndim == 4:
+                for i in range(frame.shape[0]):
+                    self.write(frame[i])
+                return
+            elif frame.ndim == 3 and frame.shape[-1] == 3:
                 frame = self.av.VideoFrame.from_ndarray(frame, format='rgb24')
             elif frame.ndim == 3 and frame.shape[-1] == 4:
                 # While some video codecs support an alpha channel, most don't,
@@ -449,7 +455,8 @@ class VideoWriter:
             elif frame.ndim == 2:
                 frame = self.av.VideoFrame.from_ndarray(frame, format='gray')
             else:
-                raise ValueError(f'Frame must be (H, W) (H, W, 3) or (H, W, 4) but was {frame.shape}')
+                raise ValueError('Frame must have shape (H, W) (H, W, 3) (H, W, 4)'
+                                 f' (t, H, W, 3) or (t, H, W, 4) but was {frame.shape}')
         if self.stream.width == 0:
             self.stream.width = frame.width
         if self.stream.height == 0:
