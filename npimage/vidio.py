@@ -439,6 +439,8 @@ class VideoWriter:
         self.stream.height = 0
 
     def write(self, frame):
+        if self._closed:
+            raise RuntimeError('VideoWriter is closed, cannot write more frames.')
         if not isinstance(frame, self.av.VideoFrame):
             if not isinstance(frame, np.ndarray):
                 frame = np.array(frame)
@@ -468,6 +470,9 @@ class VideoWriter:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
         # Flush stream
         for packet in self.stream.encode():
             self.container.mux(packet)
