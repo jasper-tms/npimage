@@ -75,42 +75,42 @@ def load_video(filename,
         raise ImportError('Missing optional dependency for video processing,'
                           ' run `pip install av tqdm`')
 
-    container = av.open(filename)
-    stream = container.streams.video[0]
-    num_frames = stream.frames
-    if not num_frames or num_frames == 0:
-        # If we don't know the number of frames, we can't preallocate, so
-        # it's hard to do better than the following approach which temporarily
-        # uses double the amount of RAM compared to the preallocated approach.
-        data = np.array(list(lazy_load_video(filename)))
-        if return_framerate:
-            return data, float(stream.average_rate)
+    with av.open(filename) as container:
+        stream = container.streams.video[0]
+        num_frames = stream.frames
+        if not num_frames or num_frames == 0:
+            # If we don't know the number of frames, we can't preallocate, so
+            # it's hard to do better than the following approach which temporarily
+            # uses double the amount of RAM compared to the preallocated approach.
+            data = np.array(list(lazy_load_video(filename)))
+            if return_framerate:
+                return data, float(stream.average_rate)
+            else:
+                return data
         else:
-            return data
-    else:
-        # Load first image to get shape and dtype
-        frame_iter = container.decode(stream)
-        first_frame = next(frame_iter)
-        first_img = first_frame.to_ndarray(format='rgb24')
-        # Preallocate memory for the entire array
-        data = np.empty((num_frames, *first_img.shape), dtype=first_img.dtype)
-        # Then fill it up frame by frame
-        data[0] = first_img
-        container.seek(0, stream=stream)
-        for i, frame in tqdm(enumerate(frame_iter), total=num_frames,
-                             desc='Loading video', disable=not progress_bar):
-            img = frame.to_ndarray(format='rgb24')
-            if i == 0 and not np.array_equal(img, first_img):
-                raise RuntimeError('PyAV seek failed. Please report how this happened'
-                                   ' at github.com/jasper-tms/npimage/issues')
-            data[i] = img
-        if (data[-1] == 0).all():
-            print('WARNING: Last frame of video is all zeros, this may'
-                  ' indicate an error in video loading unless you expected this.')
-        if return_framerate:
-            return data, float(stream.average_rate)
-        else:
-            return data
+            # Load first image to get shape and dtype
+            frame_iter = container.decode(stream)
+            first_frame = next(frame_iter)
+            first_img = first_frame.to_ndarray(format='rgb24')
+            # Preallocate memory for the entire array
+            data = np.empty((num_frames, *first_img.shape), dtype=first_img.dtype)
+            # Then fill it up frame by frame
+            data[0] = first_img
+            container.seek(0, stream=stream)
+            for i, frame in tqdm(enumerate(frame_iter), total=num_frames,
+                                 desc='Loading video', disable=not progress_bar):
+                img = frame.to_ndarray(format='rgb24')
+                if i == 0 and not np.array_equal(img, first_img):
+                    raise RuntimeError('PyAV seek failed. Please report how this happened'
+                                       ' at github.com/jasper-tms/npimage/issues')
+                data[i] = img
+            if (data[-1] == 0).all():
+                print('WARNING: Last frame of video is all zeros, this may'
+                      ' indicate an error in video loading unless you expected this.')
+            if return_framerate:
+                return data, float(stream.average_rate)
+            else:
+                return data
 
 
 def lazy_load_video(filename) -> Iterator[np.ndarray]:
@@ -136,11 +136,11 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
     except ImportError:
         raise ImportError('Missing optional dependency for video processing,'
                           ' run `pip install av tqdm`')
-    container = av.open(filename)
-    stream = container.streams.video[0]
-    for frame in container.decode(stream):
-        img = frame.to_ndarray(format='rgb24')
-        yield img
+    with av.open(filename) as container:
+        stream = container.streams.video[0]
+        for frame in container.decode(stream):
+            img = frame.to_ndarray(format='rgb24')
+            yield img
 
 
 class VideoStreamer:
@@ -465,6 +465,8 @@ class VideoWriter:
             self.stream.height = frame.height
         for packet in self.stream.encode(frame):
             self.container.mux(packet)
+            del packet
+        del frame
 
     def __enter__(self):
         return self
@@ -476,8 +478,14 @@ class VideoWriter:
         # Flush stream
         for packet in self.stream.encode():
             self.container.mux(packet)
+        del packet
+        # Close and delete everything
+        self.stream = None
         self.container.close()
+        self.container = None
         self._closed = True
+        import gc
+        gc.collect()
 
 
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
