@@ -178,18 +178,33 @@ class VideoStreamer:
             'ffprobe',
             '-select_streams', 'v:0',
             '-show_frames',
-            '-show_entries', 'frame=pkt_pos,pkt_pts_time,coded_picture_number',
+            '-show_entries', 'frame=pkt_pos,pkt_pts_time,pts_time',
             '-of', 'json',
             self.filename
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"ffprobe failed: {result.stderr}")
-        frames = json.loads(result.stdout).get('frames', [])
-        time_index = [float(frame['pkt_pts_time']) for frame in frames]
+            raise RuntimeError(f'ffprobe failed: {result.stderr}')
+        ffprobe_output = json.loads(result.stdout)
+        if 'frames' not in ffprobe_output:
+            raise KeyError('Expected "frames" in ffprobe output but only got'
+                           f' {ffprobe_output.keys()}.')
+        time_index = []
+        for frame_info in ffprobe_output['frames']:
+            if 'pts_time' in frame_info:  # pts_time is used in newer ffprobe versions
+                time_index.append(float(frame_info['pts_time']))
+            elif 'pkt_pts_time' in frame_info:  # pkt_pts_time is used in older ffprobe versions
+                time_index.append(float(frame_info['pkt_pts_time']))
+            else:
+                raise KeyError(
+                    'Expected either pts_time or pkt_pts_time in ffprobe output'
+                    f' but only got {frame_info.keys()}. Please report this issue'
+                    ' at github.com/jasper-tms/npimage/issues.'
+                )
+
         if len(time_index) == 0:
-            raise RuntimeError("No frames found in video")
+            raise RuntimeError('No frames found in video')
 
         self.n_frames = len(time_index)
         self.t0 = time_index[0]
