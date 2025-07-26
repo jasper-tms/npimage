@@ -11,8 +11,9 @@ Function list:
 - transpose_metadata (reverse the order of all per-axis metadata values)
 """
 
-from typing import Union
+from typing import Union, Optional
 from collections import OrderedDict
+from fractions import Fraction
 
 import numpy as np
 
@@ -111,8 +112,8 @@ def find_channel_axis(data,
     return None
 
 
-def transpose_metadata(metadata: dict or OrderedDict,
-                       inplace: bool = True) -> dict or OrderedDict or None:
+def transpose_metadata(metadata: Union[dict, OrderedDict],
+                       inplace: bool = True) -> Optional[Union[dict, OrderedDict]]:
     """
     Reverse the order of all metadata values that have a separate entry
     for each axis of the data.
@@ -202,3 +203,18 @@ def remove_out_of_bounds(coords, shape, allow_negative_wrapping=False,
                          convention='corner'):
     in_bounds = is_in_bounds(coords, shape, allow_negative_wrapping, convention)
     return coords[in_bounds]
+
+
+def limit_fraction(fraction: Union[Fraction, float], to: int = 2**31) -> Fraction:
+    """
+    Limit a Fraction to ensure both numerator and denominator are smaller than a given value.
+
+    This is useful for ensuring compatibility with FFmpeg, which expresses framerates
+    as ratios of two 32-bit signed integers.
+    """
+    new_fraction = Fraction(fraction)
+    limit = to
+    while abs(new_fraction.numerator) >= to or abs(new_fraction.denominator) >= to:
+        new_fraction = fraction.limit_denominator(limit)
+        limit = limit // 2
+    return new_fraction

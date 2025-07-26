@@ -373,7 +373,7 @@ class VideoStreamer:
             pass
 
 
-class VideoWriter:
+class AVVideoWriter:
     """
     Create a video writer object for saving frames to a video file.
 
@@ -411,36 +411,30 @@ class VideoWriter:
             raise ImportError('Missing optional dependency for video processing,'
                               ' run `pip install av tqdm`')
         self.av = av
-        from fractions import Fraction
         filename = os.path.expanduser(str(filename))
         if os.path.exists(filename) and not overwrite:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
-        self.framerate = str(framerate)  # str instead of float to avoid precision issues
-        while Fraction(self.framerate).denominator >= 2**31 or Fraction(self.framerate).numerator >= 2**31:
-            # If framerate has too many decimals to be expressed as a
-            # ratio of 32-bit ints, which is required by ffmpeg, crop
-            # off one decimal point of precision until it is expressable
-            self.framerate = self.framerate[:-1]
-            if self.framerate[-1] == '.':
-                self.framerate = self.framerate[:-1]
-            if len(self.framerate) == 0:
-                raise RuntimeError('Error occurred handling framerate argument')
+        self._framerate = utils.limit_fraction(framerate)
         self.crf = crf
         self.compression_speed = compression_speed
         self.codec = codec_aliases[codec.lower()]
         self.container = av.open(filename, mode='w')
-        self.stream = self.container.add_stream(self.codec, rate=Fraction(self.framerate))
+        self.stream = self.container.add_stream(self.codec, rate=self._framerate)
         self.stream.pix_fmt = 'yuv420p'
         self.stream.options = {'crf': str(crf), 'preset': compression_speed}
         self._closed = False
         self.stream.width = 0
         self.stream.height = 0
 
+    @property
+    def framerate(self):
+        return float(self._framerate)
+
     def write(self, frame):
         if self._closed:
-            raise RuntimeError('VideoWriter is closed, cannot write more frames.')
+            raise RuntimeError('AVVideoWriter is closed, cannot write more frames.')
         if not isinstance(frame, self.av.VideoFrame):
             if not isinstance(frame, np.ndarray):
                 frame = np.array(frame)
@@ -486,6 +480,178 @@ class VideoWriter:
         self._closed = True
         import gc
         gc.collect()
+
+
+class FFmpegVideoWriter:
+    """
+    Create a video writer object for saving frames to a video file using FFmpeg subprocess.
+
+    Example usage:
+    >>> with FFmpegVideoWriter('output.mp4', framerate=30) as writer:
+    >>>     for i in range(n_frames):
+    >>>         frame = do_something_to_build_an_image(i)
+    >>>         writer.write(frame)
+
+    This allows you to write a bunch of frames to a video file without
+    ever needing to store all the frames in memory at once. If you have all
+    your frames in memory already, you could use save_video(data, filename)
+
+    Parameters
+    ----------
+    filename : str
+        The filename to save the video to.
+    framerate : int or float, default 30
+        The frame rate of the video.
+    crf : int, default 23
+        Constant Rate Factor for encoding quality (lower is better quality).
+    compression_speed : str, default 'medium'
+        Compression speed preset: 'ultrafast', 'superfast', 'veryfast',
+        'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'.
+    codec : Literal['libx264', 'libx265'], default 'libx264'
+        The video codec to use for encoding. Can be any of a number of aliases for
+        these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
+    overwrite : bool, default False
+        Whether to overwrite the file if it already exists.
+    """
+    def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
+                 codec: Literal['libx264', 'libx265'] = 'libx264',
+                 overwrite=False):
+        filename = os.path.expanduser(str(filename))
+        if os.path.exists(filename) and not overwrite:
+            raise FileExistsError(f'File {filename} already exists. '
+                                  'Set overwrite=True to overwrite.')
+        self.filename = filename
+        self._framerate = utils.limit_fraction(framerate)
+        self.crf = crf
+        self.compression_speed = compression_speed
+        self.codec = codec_aliases[codec.lower()]
+
+        # Check for existing file
+        if os.path.exists(self.filename) and not overwrite:
+            raise FileExistsError(f'File {self.filename} already exists. '
+                                  'Set overwrite=True to overwrite.')
+
+        # Initialize process state
+        self._process = None
+        self._stdin = None
+        self._closed = False
+        self._width = None
+        self._height = None
+        self._pixel_format = None
+
+    @property
+    def framerate(self):
+        return float(self._framerate)
+
+    def _initialize_process(self, width, height, pixel_format):
+        """Initialize the FFmpeg subprocess for video encoding"""
+        command = [
+            'ffmpeg',
+            '-hide_banner',
+            '-y',  # Overwrite output
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}',
+            '-pix_fmt', pixel_format,
+            '-r', str(self._framerate),
+            '-i', '-',  # Read from stdin
+            '-an',  # No audio
+            '-c:v', self.codec,
+            '-pix_fmt', 'yuv420p',  # Output pixel format
+            '-crf', str(self.crf),
+            '-preset', self.compression_speed,
+            self.filename
+        ]
+
+        # Start FFmpeg process
+        self._process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE  # Capture errors
+        )
+        self._stdin = self._process.stdin
+        self._width = width
+        self._height = height
+        self._pixel_format = pixel_format
+
+    def write(self, frame):
+        """Write a frame to the video file"""
+        if self._closed:
+            raise RuntimeError('FFmpegVideoWriter is closed, cannot write more frames.')
+
+        # Convert frame to numpy array if needed
+        if not isinstance(frame, np.ndarray):
+            frame = np.array(frame)
+
+        # Handle batch frames (4D arrays)
+        if frame.ndim == 4:
+            for i in range(frame.shape[0]):
+                self.write(frame[i])
+            return
+
+        # Determine frame format and dimensions
+        if frame.ndim == 2:  # Grayscale
+            height, width = frame.shape
+            pixel_format = 'gray'
+        elif frame.ndim == 3:
+            height, width, channels = frame.shape
+            if channels == 3:  # RGB
+                pixel_format = 'rgb24'
+            elif channels == 4:  # RGBA - ignore alpha
+                frame = frame[..., :3]
+                pixel_format = 'rgb24'
+            else:
+                raise ValueError(f'Unsupported channel count: {channels}')
+        else:
+            raise ValueError('Frame must have shape (H, W) (H, W, 3) (H, W, 4)'
+                             f' (t, H, W, 3) or (t, H, W, 4) but was {frame.shape}')
+
+        # Initialize FFmpeg process on first frame
+        if self._process is None:
+            self._initialize_process(width, height, pixel_format)
+
+        # Validate frame dimensions
+        if (width, height) != (self._width, self._height):
+            raise ValueError(f'Frame dimensions {(width, height)} do not match '
+                             f'initial dimensions {(self._width, self._height)}')
+
+        # Convert frame to bytes and write to FFmpeg
+        frame_bytes = frame.tobytes()
+        self._stdin.write(frame_bytes)
+
+    def close(self):
+        """Close the video writer and finalize the video file"""
+        if self._closed:
+            return
+
+        try:
+            # Close stdin to signal end of input
+            if self._stdin:
+                self._stdin.close()
+
+            # Wait for FFmpeg to finish
+            if self._process:
+                return_code = self._process.wait()
+
+                # Check for errors
+                if return_code != 0:
+                    stderr_output = self._process.stderr.read().decode()
+                    raise RuntimeError(f'FFmpeg failed with return code {return_code}: {stderr_output}')
+        finally:
+            # Clean up process references
+            self._process = None
+            self._stdin = None
+            self._closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+# Alias the preferred video writer class
+VideoWriter = FFmpegVideoWriter
 
 
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
