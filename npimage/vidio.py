@@ -5,14 +5,18 @@ Functions for reading and writing videos.
 Function list:
 - load_video(filename) -> np.ndarray
 - lazy_load_video(filename) -> Iterator[np.ndarray]
-- save_video(data, filename) -> Saves a 3D numpy array as a video
+- save_video(data, filename) -> Saves a (time, height, width[, channels])
+    numpy array of pixel values as a video file.
+    Arguments for setting framerate, video bitrate, etc are provided.
 
 Class list:
 - VideoStreamer: Provides fast random access to frames in a video file
-  via VideoStreamer[frame_number]
+    via VideoStreamer[frame_number]. Fast random access requires first
+    indexing the video frames, which is done once the first time you
+    try to stream a given video file.
 - VideoWriter: Allows writing frames one-by-one to a video file via
-  VideoWriter.write(image). This can be advantageous compared to save_video
-  when you don't want to ever have to have all the frames in memory at once.
+    VideoWriter.write(image). This can be advantageous compared to save_video
+    because you don't ever have to have all the frames in memory at once.
 
 """
 
@@ -153,7 +157,7 @@ class VideoStreamer:
         self.filename = Path(filename)
         if not self.filename.exists():
             raise FileNotFoundError(f"File {filename} not found")
-        self.index_filename = self.filename.parent / (self.filename.stem + '_index.json')
+        self.index_filename = self.filename.with_suffix(self.filename.suffix + '.index')
         self._load_index()
 
         self.container = av.open(str(self.filename))
