@@ -212,7 +212,8 @@ def limit_fraction(fraction: Union[Fraction, float], to: int = 2**31) -> Fractio
     This is useful for ensuring compatibility with FFmpeg, which expresses framerates
     as ratios of two 32-bit signed integers.
     """
-    new_fraction = Fraction(fraction)
+    fraction = Fraction(fraction)
+    new_fraction = fraction
     limit = to
     while abs(new_fraction.numerator) >= to or abs(new_fraction.denominator) >= to:
         new_fraction = fraction.limit_denominator(limit)

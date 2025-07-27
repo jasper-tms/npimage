@@ -11,13 +11,10 @@ Function list:
 
 Class list:
 - VideoStreamer: Provides fast random access to frames in a video file
-    via VideoStreamer[frame_number]. Fast random access requires first
-    indexing the video frames, which is done once the first time you
-    try to stream a given video file.
+    via VideoStreamer[frame_number].
 - VideoWriter: Allows writing frames one-by-one to a video file via
     VideoWriter.write(image). This can be advantageous compared to save_video
     because you don't ever have to have all the frames in memory at once.
-
 """
 
 from typing import Union, Tuple, Iterator, Literal
@@ -26,22 +23,23 @@ import os
 import subprocess
 import threading
 import json
+from fractions import Fraction
 
 import numpy as np
 
 from . import utils
 
 codec_aliases = {
-    "libx264": "libx264",
-    "avc1": "libx264",
-    "h264": "libx264",
-    "H.264": "libx264",
-    "libx265": "libx265",
-    "hevc": "libx265",
-    "hvc1": "libx265",
-    "hev1": "libx265",
-    "h265": "libx265",
-    "H.265": "libx265",
+    'libx264': 'libx264',
+    'avc1': 'libx264',
+    'h264': 'libx264',
+    'H.264': 'libx264',
+    'libx265': 'libx265',
+    'hevc': 'libx265',
+    'hvc1': 'libx265',
+    'hev1': 'libx265',
+    'h265': 'libx265',
+    'H.265': 'libx265',
 }
 
 supported_extensions = ['mp4', 'mkv', 'avi', 'mov']
@@ -148,17 +146,17 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
 
 
 class VideoStreamer:
-    def __init__(self, filename):
+    def __init__(self, filename, verbose: bool = False):
         try:
             import av
+            self.av = av
         except ImportError:
             raise ImportError('Missing optional dependency for video processing,'
                               ' run `pip install av tqdm`')
+        self.verbose = verbose
         self.filename = Path(filename)
         if not self.filename.exists():
-            raise FileNotFoundError(f"File {filename} not found")
-        self.index_filename = self.filename.with_suffix(self.filename.suffix + '.index')
-        self._load_index()
+            raise FileNotFoundError(f'File {filename} not found')
 
         self.container = av.open(str(self.filename))
         self.stream = self.container.streams.video[0]
@@ -172,91 +170,158 @@ class VideoStreamer:
         self._current_frame_number = None
         self._lock = threading.Lock()
 
+        self.index_filename = self.filename.with_suffix(self.filename.suffix + '.index')
+        self._load_index()
+
     def _build_index(self):
-        print("Building index for fast random frame access...")
-        cmd = [
-            'ffprobe',
-            '-select_streams', 'v:0',
-            '-show_frames',
-            '-show_entries', 'frame=pkt_pos,pkt_pts_time,pts_time',
-            '-of', 'json',
-            self.filename
-        ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f'ffprobe failed: {result.stderr}')
-        ffprobe_output = json.loads(result.stdout)
-        if 'frames' not in ffprobe_output:
-            raise KeyError('Expected "frames" in ffprobe output but only got'
-                           f' {ffprobe_output.keys()}.')
-        time_index = []
-        for frame_info in ffprobe_output['frames']:
-            if 'pts_time' in frame_info:  # pts_time is used in newer ffprobe versions
-                time_index.append(float(frame_info['pts_time']))
-            elif 'pkt_pts_time' in frame_info:  # pkt_pts_time is used in older ffprobe versions
-                time_index.append(float(frame_info['pkt_pts_time']))
-            else:
-                raise KeyError(
-                    'Expected either pts_time or pkt_pts_time in ffprobe output'
-                    f' but only got {frame_info.keys()}. Please report this issue'
-                    ' at github.com/jasper-tms/npimage/issues.'
-                )
+        if self.verbose:
+            print('Building frame timestamp index for fast random frame access...')
 
-        if len(time_index) == 0:
-            raise RuntimeError('No frames found in video')
+        frames_pts = []
+        # Try getting frame PTS values fast using PyAV
+        try:
+            from tqdm import tqdm
 
-        self.n_frames = len(time_index)
-        self.t0 = time_index[0]
-        self.rotation = _detect_rotation(self.filename)
-        index = {
-            'n_frames': self.n_frames,
-            't0': self.t0,
-            'rotation': self.rotation,
-        }
+            with self.av.open(str(self.filename)) as container:
+                stream = container.streams.video[0]
+                # Access as packets to only read metadata (fast), not pixel data (slow)
+                for packet in tqdm(container.demux(stream), total=stream.frames,
+                                   desc='Indexing frames', disable=not self.verbose):
+                    if packet.pts is not None:
+                        frames_pts.append(packet.pts)
+
+            # demux gave us packets in the order they appeared in the file
+            # (decoding order), but we want the frames in presentation order,
+            # so we sort them.
+            frames_pts.sort()
+        except Exception as e:
+            if self.verbose:
+                print(f'Error getting frame PTS values using PyAV: {e}')
+                print('Falling back to ffprobe...')
+            frames_pts = []
+            # Fallback to ffprobe if PyAV didn't work
+            cmd = ['ffprobe',
+                    '-select_streams', 'v:0',
+                    '-show_frames',
+                    '-show_entries', 'frame=pts',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    '-v', 'quiet',
+                    self.filename]
+            ffprobe_result = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+            if ffprobe_result.returncode != 0:
+                raise RuntimeError(f'ffprobe failed: {ffprobe_result.stderr}')
+
+            for line in ffprobe_result.stdout.strip().split('\n'):
+                if line.strip().startswith('pts='):
+                    pts_str = line.split('=')[1]
+                    frames_pts.append(int(pts_str))
+
+        if len(frames_pts) == 0:
+            raise RuntimeError('No timestamps found in frame metadata')
+
+        self.frames_pts = frames_pts
+        self.n_frames = len(frames_pts)
+        self.pts0 = self.frames_pts[0]
+        self.rotation = _get_rotation_from_metadata(self.filename)
+        index = {}
 
         # Determine whether the video is constant or variable framerate
-        time_deltas = np.diff(time_index) if len(time_index) > 1 else None
-        if time_deltas is not None and np.allclose(time_deltas, time_deltas[0], atol=1e-6):
-            self.timestep = float(time_deltas[0])  # The video is constant framerate
-            index['timestep'] = self.timestep
+        pts_deltas = np.diff(frames_pts) if len(frames_pts) > 1 else None
+        if pts_deltas is not None and (pts_deltas == pts_deltas[0]).all():
+            # The video is constant framerate
+            self.pts_delta = pts_deltas[0]
+            self._framerate = 1 / (self.pts_delta * self.time_base)
+            if self._framerate.denominator == 1:
+                self._framerate = self._framerate.numerator
+                index['framerate'] = self._framerate
+            else:
+                index['framerate'] = {'numerator': self._framerate.numerator,
+                                      'denominator': self._framerate.denominator}
         else:
-            index.update({
-                'timestep': 'variable',  # The video is variable framerate
-                'time_index': time_index,
-            })
+            # The video is variable framerate
+            self._framerate = 'variable'
+            index['framerate'] = 'variable'
+
+        index['n_frames'] = self.n_frames
+        index['rotation'] = self.rotation
+        index['time_base'] = {'numerator': self.time_base.numerator,
+                              'denominator': self.time_base.denominator}
+        if self._framerate == 'variable':
+            index['frames_pts'] = frames_pts
+        else:
+            index['pts0'] = self.pts0
         with open(self.index_filename, 'w') as f:
             json.dump(index, f)
-        print(f"Saved index to {self.index_filename} so this slow step is not needed again.")
+        if self.verbose:
+            print(f'Cached index at "{self.index_filename}"')
 
     def _load_index(self):
         if not self.index_filename.exists():
             self._build_index()
+        elif self.verbose:
+            print(f'Loading frame timestamp index from "{self.index_filename}"')
 
         with open(self.index_filename, 'r') as f:
             index = json.load(f)
         self.n_frames = index['n_frames']
-        self.t0 = index['t0']
         self.rotation = index.get('rotation', None)
 
-        if not isinstance(index['timestep'], (str, float, int)):
-            raise ValueError('Malformed index: timestep is not a string or number')
+        # Load time_base and pts_values
+        time_base_data = index['time_base']
+        self.time_base = Fraction(time_base_data['numerator'], time_base_data['denominator'])
 
-        if index['timestep'] == 'variable':
-            self.timestep = 'variable'
-            self.time_index = index['time_index']
+        if index['framerate'] == 'variable':
+            self._framerate = 'variable'
+            self.frames_pts = index['frames_pts']
         else:
-            self.timestep = float(index['timestep'])
-            if self.timestep <= 0:
-                raise ValueError('Malformed index: timestep is not positive')
+            self.pts0 = index['pts0']
+            if isinstance(index['framerate'], int):
+                self._framerate = index['framerate']
+            else:
+                self._framerate = Fraction(index['framerate']['numerator'],
+                                           index['framerate']['denominator'])
+            self.pts_delta = 1 / self.time_base / self._framerate
+            if self.pts_delta.denominator != 1:
+                raise ValueError('pts_delta does not appear to be an integer. This is'
+                                 ' unexpected and may indicate a malformed index.')
+            self.pts_delta = self.pts_delta.numerator
 
-    def frame_to_time(self, frame_number):
-        if self.timestep == 'variable':
-            return self.time_index[frame_number]
+    @property
+    def framerate(self) -> Union[float, Literal['variable']]:
+        if self._framerate == 'variable':
+            return 'variable'
+        return float(self._framerate)
+
+    @property
+    def fps(self) -> float:
+        """
+        Note that fps always returns a float even if the framerate is 'variable'.
+        (If framerate is 'variable', fps returns exactly what its name, "frames per second",
+        implies: the number of frame intervals divided by the video duration in seconds.)
+        """
+        if self.framerate == 'variable':
+            return float((self.n_frames - 1) / self.time_base
+                         / (self.frames_pts[-1] - self.frames_pts[0]))
         else:
-            return self.timestep * frame_number + self.t0
+            return self.framerate
 
-    def __getitem__(self, key):
+    @property
+    def timestep(self) -> Union[float, Literal['variable']]:
+        if self._framerate == 'variable':
+            return 'variable'
+        return float(1.0 / self._framerate)
+
+    def frame_number_to_pts(self, frame_number: int) -> int:
+        if self._framerate == 'variable':
+            return self.frames_pts[frame_number]
+        else:
+            return int(frame_number) * self.pts_delta + self.pts0
+
+    def frame_number_to_time(self, frame_number: int) -> float:
+        return self.frame_number_to_pts(frame_number) * self.time_base
+
+    def __getitem__(self, key) -> np.ndarray:
         if isinstance(key, tuple):
             frame_idx = key[0]
             frame = self._get_frame(frame_idx)
@@ -267,10 +332,15 @@ class VideoStreamer:
         else:
             return self._get_frame(key)
 
-    def _get_frame(self, frame_number):
+    def _get_frame(self, frame_number) -> np.ndarray:
         """
         Provides access to random frames as fast as is reasonable when getting
-        frames from compressed video in python.
+        frames from a compressed video in python.
+
+        Returns
+        -------
+        frame : np.ndarray
+            The pixel values of the frame as a numpy array.
         """
 
         def decode_until(frame_number) -> np.ndarray:
@@ -278,18 +348,19 @@ class VideoStreamer:
             Decode forward from the current frame in the stream until we get
             to the requested frame number.
             """
-            target_time = self.frame_to_time(frame_number)
+            target_pts = self.frame_number_to_pts(frame_number)
             for frame in self.container.decode(self.stream):
-                frame_time = float(frame.pts * self.time_base)
-                if abs(frame_time - target_time) < 1e-6:
+                if frame.pts is None:
+                    continue  # Skip frames without PTS
+                if frame.pts == target_pts:
                     frame = frame.to_ndarray(format='rgb24')
                     self._current_frame_number = frame_number
                     return frame
-                if frame_time > target_time:
-                    raise RuntimeError(f"Frame with time {target_time} not found after"
-                                       f" seeking – current frame time: {frame_time}")
-            raise RuntimeError(f"Frame with time {target_time} not found after"
-                               f" seeking – current frame time: {frame_time}")
+                if frame.pts > target_pts:
+                    raise RuntimeError(f'Frame with PTS {target_pts} not found after'
+                                       f' seeking – current frame PTS: {frame.pts}')
+            raise RuntimeError(f'Frame with PTS {target_pts} not found after'
+                               f' seeking – current frame PTS: {frame.pts}')
 
         if isinstance(frame_number, slice):  # Support slicing
             start, stop, step = frame_number.indices(self.n_frames)
@@ -299,48 +370,26 @@ class VideoStreamer:
             if frame_number < 0 and frame_number + self.n_frames >= 0:
                 frame_number += self.n_frames
             elif frame_number >= self.n_frames:
-                raise IndexError(f"Frame {frame_number} out of range:"
-                                 f" [0, {self.n_frames-1}]")
+                raise IndexError(f'Frame {frame_number} out of range:'
+                                 f' [0, {self.n_frames-1}]')
             elif frame_number < 0:
-                raise IndexError(f"Negative frame {frame_number} out of"
-                                 f" range: [-{self.n_frames}, -1]")
+                raise IndexError(f'Negative frame {frame_number} out of'
+                                 f' range: [-{self.n_frames}, -1]')
 
             if (self._current_frame_number is None
                     or frame_number <= self._current_frame_number
                     or frame_number > self._current_frame_number + 100):
-                target_time = self.frame_to_time(frame_number)
-                seek_time = int(target_time / float(self.time_base))
+                target_pts = self.frame_number_to_pts(frame_number)
                 # The following actually seeks to the closest keyframe before
-                # seek_time, because it's not possible to seek directly to
+                # target_pts, because it's not possible to seek directly to
                 # non-keyframes due to video files being compressed.
-                self.container.seek(seek_time, any_frame=False,
+                self.container.seek(target_pts, any_frame=False,
                                     backward=True, stream=self.stream)
             # Now we decode frames forward until we get to the requested frame
-            return _rotate(decode_until(frame_number), self.rotation)
-
-    @property
-    def average_timestep(self):
-        """
-        Returns the average time step between frames.
-        """
-        if self.timestep == 'variable':
-            return (self.time_index[-1] - self.time_index[0]) / (self.n_frames - 1)
-        else:
-            return self.timestep
-
-    @property
-    def framerate(self):
-        """
-        Returns the frame rate of the video in frames per second.
-        """
-        if self.timestep == 'variable':
-            return 1 / self.average_timestep
-        else:
-            return 1 / self.timestep
-
-    @property
-    def fps(self):
-        return self.framerate
+            image = decode_until(frame_number)
+            if self.rotation not in [None, '0', 0]:
+                image = np.rot90(image, k=-int(self.rotation) // 90)
+            return image
 
     @property
     def first_frame(self):
@@ -782,68 +831,36 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
             writer.write(data[frame_i])
 
 
-def _detect_rotation(filename):
+def _get_rotation_from_metadata(filename):
     """
-    Detect rotation metadata from the video file using ffprobe.
-    Returns the rotation angle as a string (e.g., '90', '180', '270'), or None if not present.
+    Get rotation metadata from a video file.
+
+    We could use PyAV to do this perhaps faster, but for an already fast operation
+    like this, we stick with ffprobe to avoid the memory leaks in PyAV.
     """
-    import subprocess
-    import json
-    cmd = [
-        'ffprobe',
-        '-v', 'quiet',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream_tags=rotate',
-        '-of', 'json',
-        str(filename)
-    ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
+    cmd = ['ffprobe',
+           '-v', 'quiet',
+           '-select_streams', 'v:0',
+           '-show_entries', 'stream',
+           '-of', 'json',
+           str(filename)]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         return None
+
     try:
-        data = json.loads(result.stdout)
-        streams = data.get('streams', [])
-        if streams and 'tags' in streams[0]:
-            rotate_tag = streams[0]['tags'].get('rotate')
-            if rotate_tag:
-                return rotate_tag
+        stream = json.loads(result.stdout)['streams'][0]
+        if 'tags' in stream and 'rotate' in stream['tags']:
+            # Older versions of ffprobe return rotation metadata in this location,
+            # as a string, indicating **clockwise** rotation by this many degrees.
+            return int(stream['tags']['rotate'])
+        for side_data in stream.get('side_data_list', []):
+            # Newer versions of ffprobe return rotation metadata in this location,
+            # as an integer, indicating **counter-clockwise** rotation by this many
+            # degrees. We negate it to convert to clockwise rotation so that this
+            # function returns the same value for all versions of ffprobe.
+            if 'rotation' in side_data:
+                return -side_data['rotation']
     except (json.JSONDecodeError, KeyError, ValueError):
         pass
     return None
-
-
-def _rotate(data: np.ndarray, rotation: Union[str, int, None] = 0) -> np.ndarray:
-    """
-    Apply clockwise rotation to a numpy array
-
-    Parameters
-    ----------
-    data : np.ndarray
-        The numpy array to rotate.
-    rotation : str, int, or None, default 0
-        The rotation angle in degrees, as a string or integer.
-        Valid values are 0, 90, 180, 270, or 360.
-        If None, 0, or 360, no rotation is applied.
-
-    TODO find an actual video file with rotation_tag of 90 or 270 and check that
-    the rotation is applied in the right direction. If it's opposite the correct
-    direction, remove axes=(1, 0) from the np.rot90 calls in this function.
-    """
-    if rotation is None:
-        return data
-    try:
-        rotation = int(rotation)
-    except (ValueError, TypeError):
-        raise ValueError(f"Invalid rotation value: {rotation}")
-
-    if rotation in [0, 360]:
-        return data
-    if rotation == 90:
-        return np.rot90(data, k=1, axes=(1, 0))
-    elif rotation == 180:
-        return np.rot90(data, k=2, axes=(1, 0))
-    elif rotation == 270:
-        return np.rot90(data, k=3, axes=(1, 0))
-    else:
-        raise ValueError(f"Invalid rotation value: {rotation}")
