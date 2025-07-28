@@ -42,7 +42,7 @@ codec_aliases = {
     'H.265': 'libx265',
 }
 
-supported_extensions = ['mp4', 'mkv', 'avi', 'mov']
+supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm']
 
 
 def load_video(filename,
@@ -319,7 +319,7 @@ class VideoStreamer:
             return int(frame_number) * self.pts_delta + self.pts0
 
     def frame_number_to_time(self, frame_number: int) -> float:
-        return self.frame_number_to_pts(frame_number) * self.time_base
+        return float(self.frame_number_to_pts(frame_number) * self.time_base)
 
     def __getitem__(self, key) -> np.ndarray:
         if isinstance(key, tuple):
