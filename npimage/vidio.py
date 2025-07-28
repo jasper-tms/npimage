@@ -385,10 +385,14 @@ class VideoStreamer:
 
     def _normalize_frame_number(self, frame_number: int) -> int:
         """
-        Normalize frame number to be within the valid range.
+        Support negative indexing by converting negative frame numbers to
+        positive ones, e.g. -1 becomes n_frames - 1, -2 becomes n_frames - 2, etc.
         """
-        if not isinstance(frame_number, int):
-            raise TypeError(f'Frame number must be an integer, not {type(frame_number)}')
+        try:
+            frame_number = int(frame_number)
+        except ValueError:
+            raise TypeError(f'Frame number must be castable to int but got "{frame_number}"')
+
         if frame_number < -self.n_frames:
             raise IndexError(f'Negative frame {frame_number} not in'
                              f' valid range [-{self.n_frames}, -1]')
