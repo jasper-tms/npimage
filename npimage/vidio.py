@@ -313,6 +313,7 @@ class VideoStreamer:
         return float(1.0 / self._framerate)
 
     def frame_number_to_pts(self, frame_number: int) -> int:
+        frame_number = self._normalize_frame_number(frame_number)
         if self._framerate == 'variable':
             return self.frames_pts[frame_number]
         else:
@@ -366,16 +367,7 @@ class VideoStreamer:
             start, stop, step = frame_number.indices(self.n_frames)
             return np.array([self._get_frame(i) for i in range(start, stop, step)])
         with self._lock:
-            # Support negative indexing
-            if frame_number < 0 and frame_number + self.n_frames >= 0:
-                frame_number += self.n_frames
-            elif frame_number >= self.n_frames:
-                raise IndexError(f'Frame {frame_number} out of range:'
-                                 f' [0, {self.n_frames-1}]')
-            elif frame_number < 0:
-                raise IndexError(f'Negative frame {frame_number} out of'
-                                 f' range: [-{self.n_frames}, -1]')
-
+            frame_number = self._normalize_frame_number(frame_number)
             if (self._current_frame_number is None
                     or frame_number <= self._current_frame_number
                     or frame_number > self._current_frame_number + 100):
@@ -390,6 +382,24 @@ class VideoStreamer:
             if self.rotation not in [None, '0', 0]:
                 image = np.rot90(image, k=-int(self.rotation) // 90)
             return image
+
+    def _normalize_frame_number(self, frame_number: int) -> int:
+        """
+        Normalize frame number to be within the valid range.
+        """
+        if not isinstance(frame_number, int):
+            raise TypeError(f'Frame number must be an integer, not {type(frame_number)}')
+        if frame_number < -self.n_frames:
+            raise IndexError(f'Negative frame {frame_number} not in'
+                             f' valid range [-{self.n_frames}, -1]')
+        elif -self.n_frames <= frame_number and frame_number < 0:
+            return frame_number + self.n_frames
+        elif 0 <= frame_number and frame_number < self.n_frames:
+            return frame_number
+        elif self.n_frames <= frame_number:
+            raise IndexError(f'Frame {frame_number} not in'
+                             f' valid range [0, {self.n_frames-1}]')
+        raise IndexError(f'Frame {frame_number} not understood')
 
     @property
     def first_frame(self):
