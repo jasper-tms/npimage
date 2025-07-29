@@ -322,6 +322,22 @@ class VideoStreamer:
     def frame_number_to_time(self, frame_number: int) -> float:
         return float(self.frame_number_to_pts(frame_number) * self.time_base)
 
+    def pts_to_frame_number(self, pts: int) -> int:
+        if self._framerate == 'variable':
+            if pts not in self.frames_pts:
+                raise ValueError(f'PTS {pts} not in video index.')
+            return self.frames_pts.index(pts)
+        else:
+            if pts < self.pts0:
+                raise ValueError(f'PTS {pts} is before the start of the'
+                                 f' video (PTS {self.pts0}).')
+            if pts > self.pts_delta * (self.n_frames - 1) + self.pts0:
+                raise ValueError(f'PTS {pts} is after the end of the video (PTS '
+                                 f'{self.pts_delta * (self.n_frames - 1) + self.pts0}).')
+            if (pts - self.pts0) % self.pts_delta != 0:
+                raise ValueError(f'PTS {pts} is between frames for this video.')
+            return (pts - self.pts0) // self.pts_delta
+
     def __getitem__(self, key) -> np.ndarray:
         if isinstance(key, tuple):
             frame_idx = key[0]
