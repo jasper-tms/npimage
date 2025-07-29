@@ -161,6 +161,7 @@ class VideoStreamer:
         self.container = av.open(str(self.filename))
         self.stream = self.container.streams.video[0]
         self.time_base = self.stream.time_base
+        self._frame_iterator = self.container.decode(self.stream)
         self._shape = None
         self._first_frame = None
         self._width = None
@@ -366,9 +367,11 @@ class VideoStreamer:
             to the requested frame number.
             """
             target_pts = self.frame_number_to_pts(frame_number)
-            for frame in self.container.decode(self.stream):
+            for frame in self._frame_iterator:
                 if frame.pts is None:
-                    continue  # Skip frames without PTS
+                    if self.verbose:
+                        print('WARNING: Skipping a frame with no PTS.')
+                    continue
                 if frame.pts == target_pts:
                     frame = frame.to_ndarray(format='rgb24')
                     self._current_frame_number = frame_number
@@ -376,8 +379,8 @@ class VideoStreamer:
                 if frame.pts > target_pts:
                     raise RuntimeError(f'Frame with PTS {target_pts} not found after'
                                        f' seeking – current frame PTS: {frame.pts}')
-            raise RuntimeError(f'Frame with PTS {target_pts} not found after'
-                               f' seeking – current frame PTS: {frame.pts}')
+            raise RuntimeError('Ran out of frames before finding frame with requested'
+                               f' PTS {target_pts} – current frame PTS: {frame.pts}')
 
         if isinstance(frame_number, slice):  # Support slicing
             start, stop, step = frame_number.indices(self.n_frames)
