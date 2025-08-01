@@ -769,7 +769,7 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
 
     Parameters
     ----------
-    data : numpy.ndarray or list of filenames
+    data : numpy.ndarray or list of images
         A 3D (grayscale) or 4D (RGB) numpy array of pixel values.
 
     filename : str
@@ -823,6 +823,8 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
 
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
     if color_axis is None and data.ndim == 4:
         color_axis = utils.find_channel_axis(data, possible_channel_lengths=3)
         if color_axis is None:
