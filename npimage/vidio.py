@@ -649,6 +649,8 @@ class FFmpegVideoWriter:
         command = [
             'ffmpeg',
             '-hide_banner',
+            '-loglevel', 'error',
+            '-nostats',
             '-y',  # Overwrite output
             '-f', 'rawvideo',
             '-vcodec', 'rawvideo',
@@ -733,12 +735,13 @@ class FFmpegVideoWriter:
 
             # Wait for FFmpeg to finish
             if self._process:
+                stderr_data = self._process.stderr.read()
                 return_code = self._process.wait()
 
                 # Check for errors
                 if return_code != 0:
-                    stderr_output = self._process.stderr.read().decode()
-                    raise RuntimeError(f'FFmpeg failed with return code {return_code}: {stderr_output}')
+                    raise RuntimeError(f'FFmpeg failed with return code {return_code}:'
+                                       f' {stderr_data.decode()}')
         finally:
             # Clean up process references
             self._process = None
