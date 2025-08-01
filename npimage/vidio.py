@@ -202,14 +202,14 @@ class VideoStreamer:
             frames_pts = []
             # Fallback to ffprobe if PyAV didn't work
             cmd = ['ffprobe',
-                    '-select_streams', 'v:0',
-                    '-show_frames',
-                    '-show_entries', 'frame=pts',
-                    '-of', 'default=noprint_wrappers=1:nokey=1',
-                    '-v', 'quiet',
-                    self.filename]
+                   '-select_streams', 'v:0',
+                   '-show_frames',
+                   '-show_entries', 'frame=pts',
+                   '-of', 'default=noprint_wrappers=1:nokey=1',
+                   '-v', 'quiet',
+                   self.filename]
             ffprobe_result = subprocess.run(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True)
+                                            stderr=subprocess.PIPE, text=True)
             if ffprobe_result.returncode != 0:
                 raise RuntimeError(f'ffprobe failed: {ffprobe_result.stderr}')
 
