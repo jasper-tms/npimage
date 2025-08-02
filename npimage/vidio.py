@@ -716,8 +716,8 @@ class FFmpegVideoWriter:
 
         # Validate frame dimensions
         if (width, height) != (self._width, self._height):
-            raise ValueError(f'Frame dimensions {(width, height)} do not match '
-                             f'initial dimensions {(self._width, self._height)}')
+            raise ValueError(f'Cannot write image of size (w={width}, h={height}) to video'
+                             f' already containing images of size {(self._width, self._height)}')
 
         # Convert frame to bytes and write to FFmpeg
         frame_bytes = frame.tobytes()
