@@ -44,7 +44,7 @@ is an extension of the current functionality, since currently a sphere is
 returned with radius in all dimensions equal to the int/float distance.
 """
 
-
+from typing import Literal
 import math
 import itertools
 
@@ -387,7 +387,8 @@ def imget(image, coords, convention='corner',
         return image[tuple(iround(coords).T)]
 
 
-def imset(image, coords, value, convention='corner', out_of_bounds='ignore'):
+def imset(image, coords, value, convention='corner', out_of_bounds='ignore',
+          add_missing_dims: Literal[None, 'start', 'end'] = None):
     """
     Given a numpy array, set a particular coordinate or set of coordinates to
     have a given value.
@@ -404,7 +405,15 @@ def imset(image, coords, value, convention='corner', out_of_bounds='ignore'):
         allow_negative_wrapping = True
     else:
         allow_negative_wrapping = False
-    is_oob = is_out_of_bounds(coords, image.shape, allow_negative_wrapping, convention)
+
+    bounds = image.shape
+    if add_missing_dims == 'start':
+        while len(bounds) > coords.shape[1]:
+            bounds = bounds[1:]
+    elif add_missing_dims == 'end':
+        while len(bounds) > coords.shape[1]:
+            bounds = bounds[:-1]
+    is_oob = is_out_of_bounds(coords, bounds, allow_negative_wrapping, convention)
     if is_oob.any():
         if out_of_bounds in ['ignore', 'wrap']:
             coords = coords[~is_oob]
@@ -416,9 +425,18 @@ def imset(image, coords, value, convention='corner', out_of_bounds='ignore'):
                              f"'wrap' but was {out_of_bounds}.")
 
     if convention == 'corner':
-        image[tuple(ifloor(coords).T)] = value
+        slicer = tuple(ifloor(coords).T)
     else:  # convention == 'center'
-        image[tuple(iround(coords).T)] = value
+        slicer = tuple(iround(coords).T)
+
+    if add_missing_dims == 'start':
+        while len(slicer) < image.ndim:
+            slicer = (slice(None),) + slicer
+    elif add_missing_dims == 'end':
+        while len(slicer) < image.ndim:
+            slicer = slicer + (slice(None),)
+
+    image[slicer] = value
 
 
 # --- Drawing shapes composed of many primitives, --- #
