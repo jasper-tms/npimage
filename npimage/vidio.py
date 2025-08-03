@@ -377,10 +377,12 @@ class VideoStreamer:
                     self._current_frame_number = frame_number
                     return frame
                 if frame.pts > target_pts:
+                    self._current_frame_number = self.pts_to_frame_number(frame.pts)
                     raise RuntimeError(f'Frame with PTS {target_pts} not found after'
                                        f' seeking – current frame PTS: {frame.pts}')
-            raise RuntimeError('Ran out of frames before finding frame with requested'
-                               f' PTS {target_pts} – current frame PTS: {frame.pts}')
+            raise RuntimeError('Hit end of video before finding frame {frame_number} (PTS '
+                               f'{target_pts}). Last seen frame was {self._current_frame_number}'
+                               f' (PTS {self.frame_number_to_pts(self._current_frame_number)}')
 
         if isinstance(frame_number, slice):  # Support slicing
             start, stop, step = frame_number.indices(self.n_frames)
@@ -391,11 +393,14 @@ class VideoStreamer:
                     or frame_number <= self._current_frame_number
                     or frame_number > self._current_frame_number + 100):
                 target_pts = self.frame_number_to_pts(frame_number)
+                if self.verbose:
+                    print(f'Seeking to frame {frame_number} (PTS {target_pts})')
                 # The following actually seeks to the closest keyframe before
                 # target_pts, because it's not possible to seek directly to
                 # non-keyframes due to video files being compressed.
                 self.container.seek(target_pts, any_frame=False,
                                     backward=True, stream=self.stream)
+                self._frame_iterator = self.container.decode(self.stream)
             # Now we decode frames forward until we get to the requested frame
             image = decode_until(frame_number)
             if self.rotation not in [None, '0', 0]:
