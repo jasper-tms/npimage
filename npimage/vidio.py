@@ -19,7 +19,6 @@ Class list:
 
 from typing import Union, Tuple, Iterator, Literal
 from pathlib import Path
-import os
 import subprocess
 import threading
 import json
@@ -158,7 +157,7 @@ class VideoStreamer:
             raise ImportError('Missing optional dependency for video processing,'
                               ' run `pip install av tqdm`')
         self.verbose = verbose
-        self.filename = Path(filename)
+        self.filename = Path(filename).expanduser()
         if not self.filename.exists():
             raise FileNotFoundError(f'File {filename} not found')
 
@@ -546,8 +545,8 @@ class AVVideoWriter:
             raise ImportError('Missing optional dependency for video processing,'
                               ' run `pip install av tqdm`')
         self.av = av
-        filename = os.path.expanduser(str(filename))
-        if os.path.exists(filename) and not overwrite:
+        filename = Path(filename).expanduser()
+        if filename.exists() and not overwrite:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
@@ -651,8 +650,8 @@ class FFmpegVideoWriter:
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
                  codec: Literal['libx264', 'libx265'] = 'libx264',
                  overwrite=False):
-        filename = os.path.expanduser(str(filename))
-        if os.path.exists(filename) and not overwrite:
+        filename = Path(filename).expanduser()
+        if filename.exists() and not overwrite:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
@@ -660,11 +659,6 @@ class FFmpegVideoWriter:
         self.crf = crf
         self.compression_speed = compression_speed
         self.codec = codec_aliases[codec.lower()]
-
-        # Check for existing file
-        if os.path.exists(self.filename) and not overwrite:
-            raise FileExistsError(f'File {self.filename} already exists. '
-                                  'Set overwrite=True to overwrite.')
 
         # Initialize process state
         self._process = None
@@ -850,10 +844,10 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         raise ImportError('Missing optional dependency for video processing,'
                           ' run `pip install av tqdm`')
 
-    filename = os.path.expanduser(str(filename))
+    filename = Path(filename).expanduser()
     if filename.split('.')[-1].lower() not in supported_extensions:
         filename += '.mp4'
-    if os.path.exists(filename) and not overwrite:
+    if filename.exists() and not overwrite:
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
 
