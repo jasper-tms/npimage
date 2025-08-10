@@ -145,6 +145,10 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
             yield img
 
 
+class VideoSeekError(RuntimeError):
+    pass
+
+
 class VideoStreamer:
     def __init__(self, filename, verbose: bool = False):
         try:
@@ -378,11 +382,14 @@ class VideoStreamer:
                     return frame
                 if frame.pts > target_pts:
                     self._current_frame_number = self.pts_to_frame_number(frame.pts)
-                    raise RuntimeError(f'Frame with PTS {target_pts} not found after'
-                                       f' seeking – current frame PTS: {frame.pts}')
-            raise RuntimeError('Hit end of video before finding frame {frame_number} (PTS '
-                               f'{target_pts}). Last seen frame was {self._current_frame_number}'
-                               f' (PTS {self.frame_number_to_pts(self._current_frame_number)}')
+                    raise VideoSeekError(f'Frame with PTS {target_pts} not found after'
+                                         f' seeking – current frame PTS: {frame.pts}')
+                if type(self.verbose) is int and self.verbose:  # Set verbose=1 to use
+                    print(f'Passing frame {self.pts_to_frame_number(frame.pts)} (PTS {frame.pts})'
+                          f' while decoding to frame {frame_number} (PTS {target_pts})')
+            raise VideoSeekError('Hit end of video before finding frame {frame_number} (PTS '
+                                 f'{target_pts}). Last seen frame was {self._current_frame_number}'
+                                 f' (PTS {self.frame_number_to_pts(self._current_frame_number)}')
 
         if isinstance(frame_number, slice):  # Support slicing
             start, stop, step = frame_number.indices(self.n_frames)
@@ -392,17 +399,39 @@ class VideoStreamer:
             if (self._current_frame_number is None
                     or frame_number <= self._current_frame_number
                     or frame_number > self._current_frame_number + 100):
-                target_pts = self.frame_number_to_pts(frame_number)
+                # We seek to a few frames before the requested frame because
+                # seeking has the undesirable behavior of sometimes landing
+                # at a keyframe just after the requested frame, if a keyframe
+                # exists one or two frames after the requested frame.
+                seek_to_frame = max(0, frame_number - 3)
+                seek_to_pts = self.frame_number_to_pts(seek_to_frame)
                 if self.verbose:
-                    print(f'Seeking to frame {frame_number} (PTS {target_pts})')
-                # The following actually seeks to the closest keyframe before
+                    print(f'Frame {frame_number} requested: Seeking to'
+                          f' frame {seek_to_frame} (PTS {seek_to_pts})')
+                # The seek call actually seeks to the closest keyframe before
                 # target_pts, because it's not possible to seek directly to
                 # non-keyframes due to video files being compressed.
-                self.container.seek(target_pts, any_frame=False,
+                self.container.seek(seek_to_pts, any_frame=False,
                                     backward=True, stream=self.stream)
                 self._frame_iterator = self.container.decode(self.stream)
-            # Now we decode frames forward until we get to the requested frame
-            image = decode_until(frame_number)
+            try:
+                # Now we decode frames forward until we get to the requested frame
+                image = decode_until(frame_number)
+            except VideoSeekError as e:
+                # If we fail on the first attempt, try seeking back
+                # 30 frames (instead of 3) then decoding forward again.
+                seek_to_frame = max(0, frame_number - 30)
+                seek_to_pts = self.frame_number_to_pts(seek_to_frame)
+                if self.verbose:
+                    print(f'[WARNING] {e}')
+                    print(f'[RETRY] Frame {frame_number} requested: Seeking'
+                          f' to frame {seek_to_frame} (PTS {seek_to_pts})')
+                self.container.seek(seek_to_pts, stream=self.stream)
+                self._frame_iterator = self.container.decode(self.stream)
+                # If this one fails too, we let its exception raise.
+                # I haven't seen this ever fail, but who knows.
+                image = decode_until(frame_number)
+
             if self.rotation not in [None, '0', 0]:
                 image = np.rot90(image, k=-int(self.rotation) // 90)
             return image
