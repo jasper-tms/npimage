@@ -1,47 +1,21 @@
 #!/usr/bin/env python3
 """
-This package contains functions for drawing basic geometric shapes, like
-lines and triangles, into 3D numpy arrays (and the code almost works for nD
-arrays). opencv has drawline and drawtriangle functions, but those only
-operate on 2D image arrays. scipy.ndimage provides many other helpful,
-related functions for working with nD image arrays.
-
-Subpixel indexing conventions:
-
-'corner' convention (default): An operation that tries to get or set a pixel
-located at (x, y, z) will actually get or set the pixel with index (floor(x),
-floor(y), floor(z)). Therefore the pixel at location (x, y, z) represents the
-cube of physical locations (a, b, c) such that a is in [x, x+1), b is in [y,
-y+1), and c is [z, z+1). This is called the 'corner' convention because
-integer locations like (5, 2, 10) point to the corner of a voxel.
-
-'center' convention: An operation that tries to get or set a pixel located at
-(x, y, z) will actually get or set the pixel with index (round(x), round(y),
-round(z)). Therefore the pixel at location (x, y, z) represents the cube of
-physical locations (a, b, c) such that a is in [x-0.5, x+0.5), b is in
-[y-0.5, y+0.5), and c is in [z-0.5, z+0.5). This is called the 'center'
-convention because integer locations like (5, 2, 10) point to the middle of a
-voxel. This convention can be selected by passing convention='center' to any
-of the functions in this package (once I finish implementing it).
-
-Functions in this package use non-integer data types to preserve accuracy,
-only flooring or rounding (depending on the convention) during get-pixel or
-set-pixel operations.
+Fnctions for drawing basic geometric shapes, like lines and triangles,
+into 3D numpy arrays (and the code almost works for nD arrays for any n).
+Related tools:
+- opencv has drawline and drawtriangle functions, but those only
+  operate on 2D image arrays.
+- scipy.ndimage provides many other helpful, related functions for
+  working with nD image arrays.
 
 
-LIST OF MAJOR TODOS
-
-Implement 'center' convention logic for all functions.
-
-Make the image argument optional for drawpoint, drawline, and drawtriangle,
-in which case they should create an image just large enough to hold the drawn
-object and then return that image
-
-Make get_voxels_within_distance be able to take a multidimensional distance
-argument, in which case it should return all the voxels within an ellipse
-having its radii along each axis specified by the elements of distance. This
-is an extension of the current functionality, since currently a sphere is
-returned with radius in all dimensions equal to the int/float distance.
+TODOS:
+- Implement 'center' convention logic for all functions.
+- Make get_voxels_within_distance be able to take a multidimensional distance
+  argument, in which case it should return all the voxels within an ellipse
+  having its radii along each axis specified by the elements of distance. This
+  is an extension of the current functionality, since currently a sphere is
+  returned with radius in all dimensions equal to the int/float distance.
 """
 
 from typing import Literal
@@ -56,32 +30,39 @@ from .utils import eq, ifloor, iceil, iround, is_out_of_bounds, remove_out_of_bo
 
 # --- Primitive shapes - points, lines, triangles, circles, spheres --- #
 #TODO out_of_bounds='raise' isn't actually raising a lot of the time. Fix it.
-def drawpoint(image, coord, value, thickness=1,
-              convention='corner', out_of_bounds='ignore'):
+def drawpoint(image, coord, value, thickness=1, **imset_kwargs):
     """
-    TODO docstring
+    Change an image's value at a point or collection of points.
+
+    See npimage.graphics.imset's docstring for info on additional keyword arguments:
+    - convention: Literal['corner', 'center'] = 'corner'
+    - out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore'
+    - add_missing_dims: Literal[None, 'start', 'end'] = None
     """
     coords = thicken(coord, thickness)
-    imset(image, coords, value,
-          convention=convention, out_of_bounds=out_of_bounds)
+    imset(image, coords, value, **imset_kwargs)
 
 
-# TODO switch to kwargs
 def drawline(image, pt1, pt2, value, thickness=1,
-             convention='corner', out_of_bounds='ignore'):
+             convention='corner', **imset_kwargs):
     """
+    Change an image's values along a line from pt1 to pt2.
+
     DDA algorithm described in
     https://www.tutorialspoint.com/computer_graphics/line_generation_algorithm.htm
     with some additional logic that allows for non-integer point coordinates.
+
+    See npimage.graphics.imset's docstring for info on additional keyword arguments:
+    - convention: Literal['corner', 'center'] = 'corner'
+    - out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore'
+    - add_missing_dims: Literal[None, 'start', 'end'] = None
     """
     pt1, pt2, long_axis = _preprocess_polygon_vertices(pt1, pt2)
-    #print(f'after preprocessing, pt1 is {pt1}, pt2 is {pt2}, and long_axis is {long_axis}')
+    imset_kwargs['convention'] = convention
 
     # Deal with the start and end points as special - always draw them
-    drawpoint(image, pt1, value, thickness=thickness,
-              convention=convention, out_of_bounds=out_of_bounds)
-    drawpoint(image, pt2, value, thickness=thickness,
-              convention=convention, out_of_bounds=out_of_bounds)
+    drawpoint(image, pt1, value, thickness=thickness, **imset_kwargs)
+    drawpoint(image, pt2, value, thickness=thickness, **imset_kwargs)
 
     vec_1to2 = pt2 - pt1
     if eq(vec_1to2[long_axis], 0):
@@ -95,7 +76,6 @@ def drawline(image, pt1, pt2, value, thickness=1,
         pt2_adjustment = iceil(pt2[long_axis] - 0.5) - 0.5 - pt2[long_axis]
         pt1 += vec_1to2 * pt1_adjustment / vec_1to2[long_axis]
         pt2 += vec_1to2 * pt2_adjustment / vec_1to2[long_axis]
-        #print(f'Adjusted endpoints:\npt1={pt1}\npt2={pt2}')
     elif convention == 'center':
         #TODO Test this block more rigorously for corner case performance
         # Will be marking a pixel every time the line connecting pt1 and
@@ -105,7 +85,6 @@ def drawline(image, pt1, pt2, value, thickness=1,
         pt2_adjustment = iceil(pt2[long_axis] - 1) - pt2[long_axis]
         pt1 += vec_1to2 * pt1_adjustment / vec_1to2[long_axis]
         pt2 += vec_1to2 * pt2_adjustment / vec_1to2[long_axis]
-        #print(f'Adjusted endpoints:\npt1={pt1}\npt2={pt2}')
 
     if pt1[long_axis] > pt2[long_axis]:
         return  # Line is so short that no more points need to be marked
@@ -116,8 +95,7 @@ def drawline(image, pt1, pt2, value, thickness=1,
     n_steps = iround(n_steps)
 
     if n_steps == 0:  # pt1 == pt2, so only one point to mark
-        drawpoint(image, pt1, value, thickness=thickness,
-                  convention=convention, out_of_bounds=out_of_bounds)
+        drawpoint(image, pt1, value, thickness=thickness, **imset_kwargs)
         return
 
     pts = np.outer(np.arange(n_steps+1) / n_steps, vec_1to2) + pt1
@@ -125,22 +103,29 @@ def drawline(image, pt1, pt2, value, thickness=1,
     # slightly (20%) faster than calling drawpoint - despite drawpoint
     # literally just calling thicken and then imset itself. ???
     pts = thicken(pts, thickness)
-    imset(image, pts, value,
-          convention=convention, out_of_bounds=out_of_bounds)
+    imset(image, pts, value, **imset_kwargs)
 
 
-# TODO switch to kwargs
 def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
-                 watertight=True,
-                 fill_value=None, convention='corner', out_of_bounds='ignore'):
+                 watertight=True, fill_value=None, **imset_kwargs):
+    """
+    Draw a triangle into an image.
+
+    If `fill_value` is None, only the three edges of the triangle will be
+    drawn. If `fill_value` is a number, the inside of the triangle will be
+    drawn with that value. Note that `fill_value` for the inside of the
+    triangle can be the same as or different from `value` for the edge lines.
+
+    See npimage.graphics.imset's docstring for info on additional keyword arguments:
+    - convention: Literal['corner', 'center'] = 'corner'
+    - out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore'
+    - add_missing_dims: Literal[None, 'start', 'end'] = None
+    """
 
     if fill_value is None:
-        drawline(image, pt1, pt2, value, thickness=thickness,
-                 convention=convention, out_of_bounds=out_of_bounds)
-        drawline(image, pt2, pt3, value, thickness=thickness,
-                 convention=convention, out_of_bounds=out_of_bounds)
-        drawline(image, pt3, pt1, value, thickness=thickness,
-                 convention=convention, out_of_bounds=out_of_bounds)
+        drawline(image, pt1, pt2, value, thickness=thickness, **imset_kwargs)
+        drawline(image, pt2, pt3, value, thickness=thickness, **imset_kwargs)
+        drawline(image, pt3, pt1, value, thickness=thickness, **imset_kwargs)
         return
 
     pt1, pt2, pt3, long_axis = _preprocess_polygon_vertices(pt1, pt2, pt3)
@@ -166,7 +151,7 @@ def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
 
     try:
         iter(thickness)
-    except:
+    except TypeError:
         thickness = np.full(len(image.shape), thickness)
 
     def draw_perpendicular_from_triangle_base(basept):
@@ -195,8 +180,7 @@ def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
             else:
                 thickness[long_axis - 2] += 1
 
-        drawline(image, basept, endpt, fill_value, thickness=thickness,
-                 convention=convention, out_of_bounds=out_of_bounds)
+        drawline(image, basept, endpt, fill_value, thickness=thickness, **imset_kwargs)
 
     if n_steps == 0:
         draw_perpendicular_from_triangle_base(pt1_adjusted)
@@ -205,26 +189,27 @@ def drawtriangle(image, pt1, pt2, pt3, value, thickness=1,
         startpt = pt1_adjusted + (i / n_steps) * vec_1to3_adj
         draw_perpendicular_from_triangle_base(startpt)
 
-    drawline(image, pt1, pt2, value, thickness=thickness,
-             convention=convention, out_of_bounds=out_of_bounds)
-    drawline(image, pt2, pt3, value, thickness=thickness,
-             convention=convention, out_of_bounds=out_of_bounds)
-    drawline(image, pt3, pt1, value, thickness=thickness,
-             convention=convention, out_of_bounds=out_of_bounds)
+    drawline(image, pt1, pt2, value, thickness=thickness, **imset_kwargs)
+    drawline(image, pt2, pt3, value, thickness=thickness, **imset_kwargs)
+    drawline(image, pt3, pt1, value, thickness=thickness, **imset_kwargs)
 
 
 def drawcircle(image, center, perpendicular, radius, value,
-               fill=False, spacing=1, **kwargs):
+               fill=False, spacing=1, **imset_kwargs):
     """
-    Draw a circle
-    See drawpoint for all kwargs.
+    Draw a circle into an image.
+
+    See npimage.graphics.imset's docstring for info on additional keyword arguments:
+    - convention: Literal['corner', 'center'] = 'corner'
+    - out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore'
+    - add_missing_dims: Literal[None, 'start', 'end'] = None
     """
     ndims = 3  # TODO code up logic for determining this from the input
     return_image = False
     if image is None and center is None:
         image = np.zeros((2*iceil(radius) + 1,)*ndims, dtype=np.uint8)
         center = (radius, radius, radius)
-        kwargs['convention'] = 'center'
+        imset_kwargs['convention'] = 'center'
         return_image = True
 
     norm = lambda v: np.sqrt(sum(v**2))
@@ -241,7 +226,6 @@ def drawcircle(image, center, perpendicular, radius, value,
     v0 = v0 / norm(v0)
     v1 = v1 / norm(v1)
 
-    half_circumfrence = math.pi*radius
     num_pts = iceil(math.pi*radius/spacing) + 1
     angles = np.linspace(0, math.pi, num_pts)
     half1 = (np.outer(np.cos(angles), v0)
@@ -249,42 +233,45 @@ def drawcircle(image, center, perpendicular, radius, value,
     half2 = (np.outer(np.cos(angles), v0)
              - np.outer(np.sin(angles), v1)) * radius + center
     if fill:
-        #import npimage # for testing
         for pt1, pt2 in zip(half1, half2):
-            drawline(image, pt1, pt2, value, **kwargs)
-            #print(f'Just drew {pt1}->{pt2}')  # for testing
-            #npimage.imshow(image[0], mode='mpl')  # for testing
+            drawline(image, pt1, pt2, value, **imset_kwargs)
     else:
-        draw = lambda pts: imset(image, pts, value, **kwargs)
-        draw(half1)
-        draw(half2)
+        imset(image, half1, value, **imset_kwargs)
+        imset(image, half2, value, **imset_kwargs)
 
     if return_image:
         return image
 
 
-def drawsphere(*args, **kwargs):
-    drawneighborhood(*args, **kwargs)
-
-
-# TODO switch to kwargs
-def drawneighborhood(image=None, distance=None, ndims=None, value=1,
-                     center=None, voxel_size=None, metric='euclidian',
-                     out_of_bounds='ignore'):
+def drawsphere(image=None, distance=None, ndims=None, value=1,
+               center=None, voxel_size=None, metric='euclidian',
+               **imset_kwargs):
     """
     Draw a value into all pixels within a certain distance of a location.
-    This is almost the same thing as drawpoint, but drawpoint's thickness and
-    drawneighborhood's distance work differently.
+
+    drawsphere is a more general version of drawpoint. These are equivalent:
+    >>> im = np.full((240, 240), 255, dtype=np.uint8)
+    >>> npimage.drawsphere(im, distance=24, value=0, center=(120, 120), metric='chebyshev')
+    >>> npimage.drawpoint(im, (120, 120), 128, thickness=49)
+
+    which both draw boxes. But drawsphere with `metric='euclidian'` actually
+    draws spheres.
+
     If you want an image made for you with size just large enough to fit the
-    requested neighborhood, omit the image argument.
+    requested sphere, leave `image=None`.
+
+    See npimage.graphics.imset's docstring for info on additional keyword arguments:
+    - convention: Literal['corner', 'center'] = 'corner'
+    - out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore'
+    - add_missing_dims: Literal[None, 'start', 'end'] = None
     """
     if ndims is None:
         try:
             ndims = len(distance)
-        except:
+        except TypeError:
             try:
                 ndims = len(image.shape)
-            except:
+            except TypeError:
                 if voxel_size is not None:
                     ndims = len(voxel_size)
                 elif center is not None:
@@ -292,7 +279,7 @@ def drawneighborhood(image=None, distance=None, ndims=None, value=1,
                 else:
                     raise Exception('Specify the dimensionality you want by'
                                     "passing 'ndims='")
-            
+
     if distance is None and image is None:
         raise Exception('Must specify distance or image.')
 
@@ -334,16 +321,16 @@ def drawneighborhood(image=None, distance=None, ndims=None, value=1,
         else:
             image = np.zeros(ifloor(center + distance + 1))
 
-    #print(f'center={center}')
-    #print(f'distance={distance}')
-    #print(f'image.shape={image.shape}')
-
+    if imset_kwargs.get('add_missing_dims', None) is not None:
+        ndims = None
     voxels = get_voxels_within_distance(distance, center=center, ndims=ndims,
                                         voxel_size=voxel_size, metric=metric)
-    imset(image, voxels, value, out_of_bounds=out_of_bounds)
+    imset(image, voxels, value, **imset_kwargs)
 
     if return_image:
         return image
+
+drawneighborhood = drawsphere  # Function name alias
 
 
 # --- Low-level wrappers for getting and setting values from arrays --- #
@@ -369,7 +356,8 @@ def imget(image, coords, convention='corner',
     elif out_of_bounds != 'raise':
         raise ValueError("out_of_bounds must be 'ignore', 'raise', or"
                          f"'wrap' but was {out_of_bounds}.")
-    coords = remove_out_of_bounds(coords, image.shape, allow_negative_wrapping, convention)
+    coords = remove_out_of_bounds(coords, image.shape,
+                                  allow_negative_wrapping, convention)
     if n_original > coords.shape[0]:
         n_out_of_bounds = n_original - coords.shape[0]
         if out_of_bounds == 'raise':
@@ -387,16 +375,72 @@ def imget(image, coords, convention='corner',
         return image[tuple(iround(coords).T)]
 
 
-def imset(image, coords, value, convention='corner', out_of_bounds='ignore',
+def imset(image, coords, value,
+          convention: Literal['corner', 'center'] = 'corner',
+          out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore',
           add_missing_dims: Literal[None, 'start', 'end'] = None):
     """
     Given a numpy array, set a particular coordinate or set of coordinates to
     have a given value.
-    By default, coordinates with negative indices are ignored, i.e. this
-    function won't wrap negative indexes around to access the end of the array,
-    despite numpy arrays normally wrapping negative indices. Refusing to wrap
-    makes more sense in most graphics applications.
-        out_of_bounds, string   : 'ignore' (default), 'wrap', or 'raise'
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        The image to set pixel value(s) in.
+
+    coords : numpy.ndarray or array-like
+        The coordinate locations to set values of.
+
+    value : int, float, or array-like
+        The value to set the pixel(s) at the given coordinates to.
+
+    convention : {'corner', 'center'}, default 'corner'
+        Whether to truncate ('corner') or round ('center') fractional
+        values in the `coords` argument.
+
+        'corner' (default):
+        In this mode, coordinate (5, 2) and coordinate (4.99, 2) refer
+        to different pixels because pixel borders are at integer values.
+        Implementation: Coordinates (a, b, c) are converted to integer
+        pixel indices via (floor(a), floor(b), floor(c)).
+        Therefore the pixel at integer index (x, y, z) will be addressed
+        by (a, b, c) when a is in [x, x+1), b is in [y, y+1), and c is
+        [z, z+1). This is called the 'corner' convention because integer
+        coordinates like (5, 2, 10) point to the upper-left corner of a
+        pixel. In this case, any tiny decrease from an integer value will
+        end up pointing to a different pixel in the image.
+
+        'center':
+        In this mode, coordinate (5, 2) and coordinate (4.99, 2) refer
+        to the same pixel because pixel borders are at half-integer
+        values, so (4.51, 2) and (4.49, 2) refer to different pixels.
+        Implementation: Coordinates (a, b, c) will be converted to integer
+        pixel indices via (round(a), round(b), round(c)). Therefore the
+        pixel at integer index (x, y, z) will be addressed by (a, b, c)
+        when a is in [x-0.5, x+0.5), b is in [y-0.5, y+0.5), and c is
+        [z-0.5, z+0.5). This is called the 'center' convention because
+        integer coordinates like (5, 2, 10) point to the center of a
+        pixel, so increasing or decreasing any of the coordinate values by
+        up to 0.5 will still point to the same pixel in the image.
+
+    out_of_bounds : {'ignore', 'wrap', 'raise'}, default 'ignore'
+        By default, coordinates with negative indices are ignored, i.e. this
+        function won't wrap negative indexes around to access the end of the
+        array, despite numpy arrays normally wrapping negative indices.
+        Refusing to wrap makes more sense in most graphics applications.
+
+    add_missing_dims : {None, 'start', 'end'}, default None
+        If the `coords` argument has fewer dimensions than the `image`
+        argument, this parameter determines how to handle that mismatch.
+
+        This is useful when you want to set all the rows, columns, or
+        channels of an image to a particular value. For example:
+        - You have a (360, 640, 3) RGB pixel array `image`
+        - You have 100 pixels specified in a (100, 2) array `coords`
+        - You want to make those pixels cyan, i.e. set the values along
+          the last axis to (0, 255, 255)
+        then since the color axis is the last axis, you can call:
+        >>> imset(image, coords, (0, 255, 255), add_missing_dims='end')
     """
     if not isinstance(coords, np.ndarray):
         coords = np.array(coords)
@@ -509,17 +553,7 @@ def _preprocess_polygon_vertices(*pts):
 
     pts = list(pts)  # Make mutable
     for i, pt in enumerate(pts):
-    # This block tried to guess whether the user wants center or corner
-    # convention, but now that the functions in this module explicitly include
-    # convention as an argument, it's no longer needed
-    #    if all(isint(pt)):
-    #        pts[i] = np.array(pts[i]) + 0.5
-    #        print(f'Adjusted {i+1}{suffixes.get(i+1, "th")} point to {pts[i]}'\
-    #               ' so it represents the middle of its pixel')
-    #    else:
         pts[i] = np.array(pts[i]).astype(np.float64)
-
-    #    assert pts[i].shape == (n_dims,)
 
     longest_axis = None
     longest_axis_len = -1
@@ -562,7 +596,7 @@ def thicken(pts, thickness=1, no_duplicates=True):
 
     try:
         iter(thickness)
-    except:
+    except TypeError:
         thickness = [thickness] * pts.shape[1]
 
     # TODO make an option for doing spherical thickening using
@@ -652,14 +686,16 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
     This implementation is very slow and needs improvement
     """
     seed_value = image[seed]
-    if verbose: print(f'seed_value={seed_value}')
+    if verbose:
+        print(f'seed_value={seed_value}')
     if fill_diagonally:
         neighbors = get_voxels_within_distance(1, ndims=len(image.shape),
                                                metric='chebyshev')
     else:
         neighbors = get_voxels_within_distance(1, ndims=len(image.shape))
 
-    if verbose: print(f'neighbors={neighbors}')
+    if verbose:
+        print(f'neighbors={neighbors}')
     neighbors = neighbors[~(neighbors == 0).all(axis=1)]
     fill_mask = np.zeros(image.shape, dtype=bool)
 
@@ -670,12 +706,10 @@ def floodfill(image, seed, fill_value, fill_diagonally=False,
     #TODO learn cython????
 
     def fill(wavefront, iteration):
-        if verbose: print(f'iteration={iteration}, len(wavefront)={len(wavefront)}')
-        #print(wavefront)
-        #fill wavefront
+        if verbose:
+            print(f'iteration={iteration}, len(wavefront)={len(wavefront)}')
         imset(fill_mask, wavefront, True)
         imset(image, wavefront, fill_value)
-        #print(f'image:\n{image}')
 
         #add valid neighbors
         new_wavefront = []
@@ -724,7 +758,6 @@ def to_physical_coordinates(voxel_coordinates, voxel_size, offset=0):
     (in units of microns per voxel) and offset (indicating the physical
     coordinates of the origin voxel, in microns)
     """
-    #TODO test this.
     return voxel_coordinates * voxel_size + offset
 
 
@@ -737,7 +770,4 @@ def to_voxel_coordinates(physical_coordinates, voxel_size, offset=0):
     accuracy, and downstream functions will need to convert to int if these are
     to be used to index an array.
     """
-    #print(f'physical_coordinates={physical_coordinates}')
-    #print(f'offset={offset}')
-    #print(f'voxel_size={voxel_size}')
     return (physical_coordinates - offset) / voxel_size
