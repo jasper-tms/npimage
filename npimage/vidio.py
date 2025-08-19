@@ -137,7 +137,7 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
     except ImportError:
         raise ImportError('Missing optional dependency for video processing,'
                           ' run `pip install av tqdm`')
-    with av.open(filename) as container:
+    with av.open(Path(filename).expanduser()) as container:
         stream = container.streams.video[0]
         for frame in container.decode(stream):
             img = frame.to_ndarray(format='rgb24')
