@@ -239,6 +239,7 @@ def save(data,
             try:
                 iter(pixel_size)
                 if len(pixel_size) == data.ndim - 1 and channel_axis is not None:
+                    pixel_size = list(pixel_size)
                     pixel_size.insert(channel_axis, np.nan)
             except TypeError:
                 if channel_axis is not None:
