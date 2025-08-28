@@ -14,6 +14,7 @@ Function list:
 from typing import Iterable, Literal, Union, Optional, Tuple, List
 
 import numpy as np
+from tqdm import tqdm
 
 from .utils import iround, eq, isint, find_channel_axis
 
@@ -326,10 +327,10 @@ def offset(image: np.ndarray,
            distance: Union[float, Iterable[float]],
            axis: int = None,
            expand_bounds: bool = False,
-           edge_mode: Literal['extend', 'wrap',
-                              'reflect', 'constant'] = 'extend',
-           edge_fill_value=0,
-           fill_transparent=False) -> np.ndarray:
+           fill_empty_with: float = 0,
+           keep_input_dtype: bool = True,
+           fill_transparent: bool = False,
+           verbose: bool = False) -> np.ndarray:
     """
     Offset an image by a given distance.
 
@@ -341,7 +342,7 @@ def offset(image: np.ndarray,
 
     If edge_mode is set to 'constant', the pixels no longer occupied by the
     original image as a result of the offset will be filled in with
-    'edge_fill_value'.
+    'fill_empty_value'.
 
     See also scipy.ndimage.shift, which performs a very similar operation
     """
@@ -353,19 +354,21 @@ def offset(image: np.ndarray,
                              ' did a mix of those two.')
     except TypeError:
         distance_iter = [0] * len(image.shape)
+        if len(distance_iter) == 1 and axis is None:
+            axis = 0
         if axis is None:
             raise ValueError('Must specify axis when giving distance as a'
                              ' single number.')
         distance_iter[axis] = distance
         distance = distance_iter
-    if edge_mode not in ['extend', 'wrap', 'reflect', 'constant']:
-        raise ValueError("edge_mode must be one of 'extend', 'wrap', 'reflect', or 'constant'")
-    if edge_mode in ['wrap', 'reflect']:
-        raise NotImplementedError("edge_mode '{}' not yet implemented".format(edge_mode))
 
-    if len(image.shape) == len(distance) + 1 and image.shape[-1] in [1, 3, 4]:
-        # Specify no offset along the channels axis, if not specified by user
-        distance = (*distance, 0)
+    if len(image.shape) == len(distance) + 1:
+        channel_axis = find_channel_axis(image)
+        if channel_axis is not None:
+            # Specify no offset along the channels axis, if not specified by user
+            distance = list(distance)
+            distance.insert(channel_axis, 0)
+            distance = tuple(distance)
 
     if len(image.shape) != len(distance):
         m = (f'distance must have length {len(image.shape)} to specify an'
@@ -373,29 +376,41 @@ def offset(image: np.ndarray,
              f' {len(distance)}')
         raise ValueError(m)
 
-    if not expand_bounds:
-        new_image = np.full_like(image, edge_fill_value)
-    else:
-        new_shape = np.array(image.shape) + np.array([int(max(0, d)) for d in distance])
-        new_image = np.full(new_shape, edge_fill_value, dtype=image.dtype)
+    new_dtype = (image.dtype if keep_input_dtype or all(eq(d, int(d)) for d in distance)
+                 else np.float64)
+    distance_int = [int(d) for d in distance]
+    new_shape = (image.shape if not expand_bounds else
+                 np.array(image.shape) + np.array([int(max(0, d)) for d in distance]))
+    new_image = np.full(new_shape, fill_empty_with, dtype=new_dtype)
 
-    if image.shape[-1] == 4 and not fill_transparent:
-        # If rgba, set alpha channel value to max
-        # The line below means new_image[:, :, :, ..., :, -1] = 255
-        new_image[tuple([slice(None, None)] * (len(image.shape)-1) + [-1])] = 255
+    if fill_transparent:
+        raise NotImplementedError('fill_transparent not yet implemented')
+    # Previous implementation of fill_transparent:
+    #if image.shape[-1] == 4 and not fill_transparent:
+    #    # If rgba, set alpha channel value to max
+    #    # The line below means new_image[:, :, :, ..., :, -1] = 255
+    #    new_image[tuple([slice(None, None)] * (len(image.shape)-1) + [-1])] = 255
 
-    distance_int = [int(x) for x in distance]
+    source_range = [slice(max(0, -d), min(s, s-d))
+                    for d, s in zip(distance_int, new_image.shape)]
+    target_range = [slice(max(0, d), min(s, s+d))
+                    for d, s in zip(distance_int, new_image.shape)]
 
-    source_range = [slice(max(0, -d), min(s, s-d)) for d, s in zip(distance_int, new_image.shape)]
-    target_range = [slice(max(0, d), min(s, s+d)) for d, s in zip(distance_int, new_image.shape)]
-
+    if verbose:
+        print('Performing integer offset...')
+    # This is the line that does the main operation
     new_image[tuple(target_range)] = image[tuple(source_range)]
 
     for i, d in enumerate(distance):
+        progress_msg = f'Performing subpixel offset along axis {i}' if verbose else None
         if not eq(d, int(d)):
             _offset_subpixel(new_image, d - int(d), i,
-                             edge_fill_value=edge_fill_value,
-                             fill_transparent=fill_transparent, inplace=True)
+                             edge_mode='constant',
+                             constant_edge_value=fill_empty_with,
+                             keep_input_dtype=True,
+                             fill_transparent=fill_transparent,
+                             inplace=True,
+                             progress_msg=progress_msg)
 
     return new_image
 
@@ -405,9 +420,11 @@ def _offset_subpixel(image: np.ndarray,
                      axis: int,
                      edge_mode: Literal['extend', 'wrap',
                                         'reflect', 'constant'] = 'extend',
-                     edge_fill_value=0,
-                     fill_transparent=False,
-                     inplace=False):
+                     constant_edge_value: Optional[float] = None,
+                     keep_input_dtype: bool = True,
+                     fill_transparent: bool = False,
+                     inplace: bool = False,
+                     progress_msg: Optional[str] = None):
     """
     Offset an image by a fraction of a pixel along a single specified axis.
 
@@ -422,61 +439,80 @@ def _offset_subpixel(image: np.ndarray,
     The pixels no longer occupied by the original image as a result of the
     offset will be filled in with 'edge_fill_value'.
     """
-    assert -1 < distance and distance < 1
+    if inplace and not keep_input_dtype:
+        raise ValueError("inplace=True doesn't make sense with keep_input_dtype=False")
+    if distance < -1 or distance > 1:
+        raise ValueError('subpixel offset distance must be between -1 and 1')
+    if abs(distance) < 1e-6:
+        return image if inplace else image.copy()
+    if edge_mode not in ['extend', 'wrap', 'reflect', 'constant']:
+        raise ValueError('edge_mode must be one of "extend", "wrap",'
+                         ' "reflect", or "constant"')
+    if fill_transparent:
+        raise NotImplementedError('fill_transparent not yet implemented')
 
-    one_pix_offset = [0] * len(image.shape)
-    one_pix_offset[axis] = 1 if distance >= 0 else -1
-    image_1pix_shifted = offset(image, one_pix_offset,
-                                edge_fill_value=edge_fill_value,
-                                fill_transparent=fill_transparent)
-    distance = abs(distance)
+    if not inplace:
+        if keep_input_dtype:
+            image = image.copy()
+        else:
+            image = image.astype('float64')
 
-    if np.issubdtype(image.dtype, np.integer):
-        # If the input array is an integer type, we should avoid creating a
-        # float version of the array during calculations, because float arrays
-        # can take up an unacceptable amount of memory. (e.g. If I write lazy
-        # code that ends up multiplying a uint8 array by a fractional value
-        # like 0.5, a float64 array is created which takes up 8x the amount of
-        # memory as the source array. And we need to make two of these!).
-        # Instead, we will do a trick of increasing the bit-depth of the source
-        # array by 1 byte (or a few bytes, since numpy only works with bit
-        # depths that are a power of 2, e.g. uint24 isn't a thing), use that
-        # additional range to keep some accuracy during the weighted average
-        # calculation, then cast back to the original dtype.
+    abs_distance = abs(distance)
+    sign = 1 if distance > 0 else -1
+    axis_size = image.shape[axis]
+    slicer: List[Union[slice, int]] = [slice(None)] * image.ndim
 
-        upcast_dtype = np.dtype(f'{image.dtype.kind}{image.dtype.itemsize * 2}')
-        image_upcast = image.astype(upcast_dtype)
-        image_1pix_shifted_upcast = image_1pix_shifted.astype(upcast_dtype)
+    # Handle last slice which attempts to pull data from out of bounds
+    final_index = 0 if sign > 0 else -1
+    slicer[axis] = final_index
+    final_slice = tuple(slicer)
 
-        # We'll use the extra bit of precision to enable us to use integer
-        # weights from 0 to 255 instead of float weights from 0.0 to 1.0
-        image_weight = int(256 * (1 - distance))
-        image_1pix_shifted_weight = int(256 * distance)
-        # Adding 127 before dividing by 256 means we round to the nearest
-        # integer instead of truncating (which we'd get without the 127)
-        image_subpix_shifted = (
-            (image_upcast * image_weight)
-            + (image_1pix_shifted_upcast * image_1pix_shifted_weight)
-            + 127
-        ) // 256
-        del image_upcast, image_1pix_shifted_upcast, image_1pix_shifted
-        gc.collect()
+    if edge_mode == 'extend':
+        edge_data = image[final_slice].copy()
+    elif edge_mode == 'wrap':
+        slicer[axis] -= sign
+        edge_data = image[tuple(slicer)].copy()
+    elif edge_mode == 'reflect':
+        slicer[axis] += sign
+        edge_data = image[tuple(slicer)].copy()
+    elif edge_mode == 'constant':
+        if constant_edge_value is None:
+            raise ValueError('constant_edge_value must be provided when'
+                             ' edge_mode is "constant"')
+        edge_data = constant_edge_value
 
-        # Now cast back to the original dtype
-        image_subpix_shifted = image_subpix_shifted.astype(image.dtype)
+    loop_range = range(axis_size - 1, 0, -1) if sign > 0 else range(0, axis_size - 1, 1)
 
-    elif np.issubdtype(image.dtype, np.floating):
-        image_subpix_shifted = image * (1 - distance) + image_1pix_shifted * distance
+    for i in tqdm(loop_range, desc=progress_msg, disable=not bool(progress_msg)):
+        slicer[axis] = i
+        current_slice = tuple(slicer)
+        slicer[axis] = i - sign
+        adjacent_slice = tuple(slicer)
 
-    if inplace:
-        image[:] = image_subpix_shifted
-    else:
-        return image_subpix_shifted
+        new_values = (
+            (1 - abs_distance) * image[current_slice]
+            + abs_distance * image[adjacent_slice]
+        )
+        if keep_input_dtype and np.issubdtype(image.dtype, np.integer):
+            new_values = iround(new_values, output_dtype=image.dtype)
+        image[current_slice] = new_values
+
+    image[final_slice] = (
+        (1 - abs_distance) * image[final_slice]
+        + abs_distance * edge_data
+    )
+
+    if not inplace:
+        return image
 
 
 def paste(image: np.ndarray,
           target: np.ndarray,
-          offset: Iterable[float]):
+          offset: Iterable[float],
+          subpixel_edge_mode: Literal['extend', 'wrap',
+                                      'reflect', 'constant'] = 'extend',
+          constant_edge_value: Optional[float] = None,
+          verbose: bool = False):
     """
     Paste an image onto another image at a given offset.
 
@@ -492,9 +528,16 @@ def paste(image: np.ndarray,
                          'dimensions in the image.')
     offset_int = [int(x) for x in offset]
     offset_subpixel = [x - int(x) for x in offset]
+    if any(not eq(o, 0) for o in offset_subpixel):
+        image = image.copy()
     for i, offset in enumerate(offset_subpixel):
+        progress_msg = f'Performing subpixel offset along axis {i}' if verbose else None
         if not eq(offset, 0):
-            _offset_subpixel(image, offset, i, inplace=True)
+            _offset_subpixel(image, offset, i,
+                             edge_mode=subpixel_edge_mode,
+                             constant_edge_value=constant_edge_value,
+                             inplace=True,
+                             progress_msg=progress_msg)
 
     source_range = [slice(max(0, -o), min(s, t-o))
                     for o, s, t in zip(offset_int, image.shape, target.shape)]
