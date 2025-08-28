@@ -12,11 +12,10 @@ Function list:
 """
 
 from typing import Iterable, Literal, Union, Optional, Tuple, List
-import gc
 
 import numpy as np
 
-from .utils import iround, eq, isint
+from .utils import iround, eq, isint, find_channel_axis
 
 
 def squeeze_dtype(image: np.ndarray, minimum_bits=1):
@@ -233,29 +232,50 @@ def downsample(image: np.ndarray,
     image : np.ndarray
         The image to downsample.
 
-    factor : int or iterable of ints
+    factor : int or iterable of ints, default 2
         An iterable with length matching the number of axes in the image,
         specifying a downsampling factor along each axis.
         If factor is provided as an int, that int will be used for each axis.
-        If the image is rgb or rgba (that is, the final axis has length 3 or
-        4), it is not necessary to specify a factor for that axis and so the
-        'factor' iterable can be one element shorter than the number of axes in
-        the image.
+        If the image has a channel axis (RGB/RGBA), it is not necessary to
+        specify a factor for that axis and so the 'factor' iterable can be
+        one element shorter than the number of axes in the image.
 
-    keep_input_dtype : bool
+    keep_input_dtype : bool, default True
         If True, the output image will have the same dtype as the input image.
         If False, the output image will have dtype float64 to keep full precision.
+
+    Returns
+    -------
+    np.ndarray
+        The downsampled image.
+
+    Examples
+    --------
+    Downsample a shape (2, 4) array using default settings of factor=2, keep_input_dtype=True
+
+    >>> downsample(np.array([[1, 2, 3, 4],
+    ...                      [5, 6, 7, 8]]))
+    array([[4, 6]])
+
+    Note that the output dtype is kept as int, which loses some precision. Compare to:
+
+    >>> downsample(np.array([[1, 2, 3, 4],
+    ...                      [5, 6, 7, 8]]),
+    ...            keep_input_dtype=False)
+    array([[3.5, 5.5]])
     """
+    channel_axis = find_channel_axis(image)
     if isinstance(factor, int):
-        if image.shape[-1] in [3, 4]:
+        if channel_axis is not None:
             # If RGB/RGBA image, don't downsample the colors axis
             factor = (factor,) * (len(image.shape) - 1)
         else:
             factor = (factor,) * len(image.shape)
-    if len(factor) == len(image.shape) - 1 and image.shape[-1] in [3, 4]:
+    if len(factor) == len(image.shape) - 1 and channel_axis is not None:
         if verbose:
-            print('RGB/RGBA image detected - not downsampling last axis.')
-        factor = (*factor, 1)
+            print('RGB/RGBA image detected - not downsampling channel axis.')
+        factor = list(factor)
+        factor.insert(channel_axis, 1)
     if any([f > l > 1 for f, l in zip(factor, image.shape)]):
         raise ValueError('Downsampling factor must be <= image size along each axis')
 
@@ -468,7 +488,8 @@ def paste(image: np.ndarray,
     except TypeError:
         offset = [offset] * len(image.shape)
     if len(offset) != image.ndim:
-        raise ValueError('The length of the offset must match the number of dimensions in the image.')
+        raise ValueError('The length of the offset must match the number of '
+                         'dimensions in the image.')
     offset_int = [int(x) for x in offset]
     offset_subpixel = [x - int(x) for x in offset]
     for i, offset in enumerate(offset_subpixel):
