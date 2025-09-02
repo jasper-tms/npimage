@@ -844,9 +844,10 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         raise ImportError('Missing optional dependency for video processing,'
                           ' run `pip install av tqdm`')
 
-    filename = Path(filename).expanduser()
+    filename = str(filename)
     if filename.split('.')[-1].lower() not in supported_extensions:
         filename += '.mp4'
+    filename = Path(filename).expanduser()
     if filename.exists() and not overwrite:
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
@@ -879,7 +880,7 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         n_frames = data.shape[0]
         height, width = data.shape[1:]
 
-    extension = filename.split('.')[-1].lower()
+    extension = filename.suffix.lower().lstrip('.')
     if extension == 'mp4':
         pad = [[0, 0], [0, 0], [0, 0]]
         if height % 2 != 0:
