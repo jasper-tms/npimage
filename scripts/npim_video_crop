@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""
+Crop a certain time range out of a video.
+
+Completely decodes and reencodes from scratch to ensure
+that first frame's timestamp is 0, avoiding black initial
+frames that can occur when using ffmpeg to crop a video.
+
+Does not copy audio.
+"""
+
+import sys
+from pathlib import Path
+
+from tqdm import trange
+
+import npimage
+
+#downsample = False
+downsample = 2
+
+fn = sys.argv[1]
+start_time = float(sys.argv[2])
+end_time = float(sys.argv[3])
+out_name = f'{Path(fn).stem}_{start_time:.2f}s-{end_time:.2f}s.mp4'
+if downsample:
+    out_name = out_name.replace('.mp4', f'_ds{downsample}.mp4')
+out_fn = Path(fn).with_name(out_name)
+
+stream = npimage.VideoStreamer(fn)
+
+frame_idx = 0
+while stream.frame_number_to_time(frame_idx) < start_time:
+    frame_idx += 1
+start_frame = frame_idx
+while stream.frame_number_to_time(frame_idx) < end_time:
+    frame_idx += 1
+end_frame = frame_idx
+print(f'Starting at frame {start_frame} (time {stream.frame_number_to_time(start_frame)})')
+print(f'Ending at frame {end_frame} (time {stream.frame_number_to_time(end_frame)})')
+
+fps = stream.fps
+with npimage.VideoWriter(out_fn, framerate=fps) as writer:
+    for frame_idx in trange(start_frame, end_frame):
+        if downsample:
+            writer.write(npimage.downsample(stream[frame_idx], 2))
+        else:
+            writer.write(stream[frame_idx])
