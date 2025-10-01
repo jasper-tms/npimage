@@ -367,7 +367,8 @@ def show(data,
          dim_order='yx',
          data_type: Literal['image', 'segmentation'] = 'image',
          mode: Literal['PIL', 'mpl'] = 'PIL',
-         convert_to_8bit=True,
+         convert_to_8bit: bool = True,
+         convert_kwargs: dict = {'maximize_contrast': True},
          channel_axis='guess',
          **kwargs) -> None:
     """
@@ -411,7 +412,11 @@ def show(data,
         data = np.moveaxis(data, utils.find_channel_axis(data), -1)
 
     if convert_to_8bit and data.dtype != np.uint8:
-        data = operations.to_8bit(data)
+        if any(key in convert_kwargs for key in
+                ['bottom_value', 'bottom_percentile', 'top_value', 'top_percentile']):
+            if 'maximize_contrast' not in convert_kwargs:
+                convert_kwargs['maximize_contrast'] = True
+        data = operations.to_8bit(data, **convert_kwargs)
 
     colorbar = False
     if 'colorbar' in kwargs:
