@@ -343,15 +343,29 @@ class VideoStreamer:
             return (pts - self.pts0) // self.pts_delta
 
     def __getitem__(self, key) -> np.ndarray:
-        if isinstance(key, tuple):
-            frame_idx = key[0]
-            frame = self._get_frame(frame_idx)
-            if len(key) == 1:
-                return frame
-            else:
-                return frame[key[1:]]
-        else:
+        if isinstance(key, int):
             return self._get_frame(key)
+        if isinstance(key, slice):  # Support slicing
+            key = (key,)  # Logic is handled in the tuple case below
+        if not isinstance(key, tuple):
+            raise TypeError('Key must be an int, slice, or a tuple of ints/slices')
+
+        frame_idx = key[0]
+        if isinstance(frame_idx, int):
+            frames = self._get_frame(frame_idx)
+            key = key[1:]
+        elif isinstance(frame_idx, slice):  # Support slicing
+            start, stop, step = frame_idx.indices(self.n_frames)
+            frames = np.array([self._get_frame(i) for i in range(start, stop, step)])
+            key = (slice(None),) + key[1:]
+        elif isinstance(frame_idx, (list, tuple, np.ndarray)):  # Support sequences of ints
+            if not all(isinstance(i, int) for i in frame_idx):
+                raise TypeError('Sequences of frame indices must contain only integers')
+            frames = np.array([self._get_frame(i) for i in frame_idx])
+            key = (slice(None),) + key[1:]
+        else:
+            raise TypeError("Key's first element must be an int, slice, or sequence of ints")
+        return frames[key]
 
     def _get_frame(self, frame_number) -> np.ndarray:
         """
@@ -390,9 +404,6 @@ class VideoStreamer:
                                  f'{target_pts}). Last seen frame was {self._current_frame_number}'
                                  f' (PTS {self.frame_number_to_pts(self._current_frame_number)}')
 
-        if isinstance(frame_number, slice):  # Support slicing
-            start, stop, step = frame_number.indices(self.n_frames)
-            return np.array([self._get_frame(i) for i in range(start, stop, step)])
         with self._lock:
             frame_number = self._normalize_frame_number(frame_number)
             if (self._current_frame_number is None
