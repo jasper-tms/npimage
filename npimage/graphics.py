@@ -204,29 +204,42 @@ def drawcircle(image, center, perpendicular, radius, value,
     - out_of_bounds: Literal['ignore', 'wrap', 'raise'] = 'ignore'
     - add_missing_dims: Literal[None, 'start', 'end'] = None
     """
-    ndims = 3  # TODO code up logic for determining this from the input
     return_image = False
     if image is None and center is None:
+        ndims = len(perpendicular) if perpendicular is not None else 2
         image = np.zeros((2*iceil(radius) + 1,)*ndims, dtype=np.uint8)
-        center = (radius, radius, radius)
+        center = (radius,) * ndims
         imset_kwargs['convention'] = 'center'
         return_image = True
+    if image is None:
+        raise ValueError("Specifying center without image doesn't make sense.")
+    ndims = image.ndim
 
-    norm = lambda v: np.sqrt(sum(v**2))
-    perpendicular = np.array(perpendicular)
-    if eq(norm(perpendicular), 0):
-        print('WARNING: Perpendicular had 0 length. No circle was drawn.')
-    perpendicular = perpendicular / norm(perpendicular)
+    if ndims == 1:
+        raise ValueError("Can't draw a circle on 1D array.")
+    elif ndims == 2:
+        if perpendicular is not None:
+            print('[npimage.drawcircle] WARNING: perpendicular ignored since ndims is 2.')
+        v0 = np.array((1, 0))
+        v1 = np.array((0, 1))
+    elif perpendicular is None:
+        raise ValueError("Must specify perpendicular for ndims > 2")
+    else:
+        norm = lambda v: np.sqrt(sum(v**2))
+        perpendicular = np.array(perpendicular)
+        if eq(norm(perpendicular), 0):
+            print('WARNING: Perpendicular had 0 length. No circle was drawn.')
+        perpendicular = perpendicular / norm(perpendicular)
 
-    ax = np.array((1,) + (0,) * (ndims-1))
-    v0 = np.cross(ax, perpendicular)
-    if eq(norm(v0), 0):
-        v0 = np.cross(np.flip(ax), perpendicular)
-    v1 = np.cross(v0, perpendicular)
-    v0 = v0 / norm(v0)
-    v1 = v1 / norm(v1)
+        ax = np.array((1,) + (0,) * (ndims-1))
+        v0 = np.cross(ax, perpendicular)
+        if eq(norm(v0), 0):
+            v0 = np.cross(np.flip(ax), perpendicular)
+        v1 = np.cross(v0, perpendicular)
+        v0 = v0 / norm(v0)
+        v1 = v1 / norm(v1)
 
-    num_pts = iceil(math.pi*radius/spacing) + 1
+    num_pts = iceil(math.pi * radius / spacing) + 1
     angles = np.linspace(0, math.pi, num_pts)
     half1 = (np.outer(np.cos(angles), v0)
              + np.outer(np.sin(angles), v1)) * radius + center
