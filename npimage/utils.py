@@ -49,13 +49,28 @@ def eq(a, b, tolerance=1e-8):
     return abs(a - b) < tolerance
 
 
-#TODO duck type this to accept a more general class of objects that extend ints
 def isint(n):
+    """
+    Check whether the given variable is an integer (either a built-in
+    int or a numpy integer type). If the argument is iterable, return
+    a list of booleans indicating whether each element is an integer
+    (again either a built-in int or a numpy integer type).
+
+    Notes
+    -----
+    You might think that isinstance(n, int) is what you want, but that
+      has the undesirable behavior of returning True for bools, and
+      returning False for numpy integer types.
+    To check whether n is a built-in int or np.integer _but not an iterable
+      of them_, use `if npimage.isint(n) is True`, or just
+      call `if np.issubdtype(type(n), np.integer)` yourself.
+    This function does NOT recognize integer types from other packages
+      including TensorFlow, PyTorch, or JAX.
+    """
     try:
-        return [isinstance(a, int) or np.issubdtype(type(a), np.integer)
-                for a in n]
+        return [np.issubdtype(type(a), np.integer) for a in n]
     except TypeError:
-        return isinstance(n, int) or np.issubdtype(type(n), np.integer)
+        return np.issubdtype(type(n), np.integer)
 
 
 def find_channel_axis(data,
@@ -133,15 +148,15 @@ def find_channel_axis(data,
     >>> npimage.find_channel_axis(np.empty((30, 4)), minimum_image_size=0)
     1
     """
-    if isinstance(possible_channel_axes, int):
+    if np.issubdtype(type(possible_channel_axes), np.integer):
         possible_channel_axes = [possible_channel_axes]
     if possible_channel_axes is None:
         possible_channel_axes = range(data.ndim)
 
-    if isinstance(possible_channel_lengths, int):
+    if np.issubdtype(type(possible_channel_lengths), np.integer):
         possible_channel_lengths = [possible_channel_lengths]
 
-    if isinstance(minimum_image_size, int):
+    if np.issubdtype(type(minimum_image_size), np.integer):
         minimum_image_size = (minimum_image_size,)
 
     for axis in possible_channel_axes:

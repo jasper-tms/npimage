@@ -16,7 +16,7 @@ from typing import Iterable, Literal, Union, Optional, Tuple, List
 import numpy as np
 from tqdm import tqdm
 
-from .utils import iround, eq, isint, find_channel_axis
+from .utils import iround, eq, find_channel_axis
 
 
 def squeeze_dtype(image: np.ndarray, minimum_bits=1):
@@ -266,7 +266,7 @@ def downsample(image: np.ndarray,
     array([[3.5, 5.5]])
     """
     channel_axis = find_channel_axis(image)
-    if isinstance(factor, int):
+    if np.issubdtype(type(factor), np.integer):
         if channel_axis is not None:
             # If RGB/RGBA image, don't downsample the colors axis
             factor = (factor,) * (len(image.shape) - 1)
@@ -617,7 +617,7 @@ def overlay_two_images(im1: np.ndarray,
     """
     Overlay two images, with the second image offset by the given amount.
     """
-    if isint(im2_offset):
+    if any(np.issubdtype(type(im2_offset), t) for t in [np.integer, np.floating]):
         im2_offset = [im2_offset] * im2.ndim
     if expand_bounds:
         offsets = ([max(0, -o) for o in im2_offset],

@@ -280,7 +280,7 @@ class VideoStreamer:
             self.frames_pts = index['frames_pts']
         else:
             self.pts0 = index['pts0']
-            if isinstance(index['framerate'], int):
+            if np.issubdtype(type(index['framerate']), np.integer):
                 self._framerate = index['framerate']
             else:
                 self._framerate = Fraction(index['framerate']['numerator'],
@@ -343,7 +343,7 @@ class VideoStreamer:
             return (pts - self.pts0) // self.pts_delta
 
     def __getitem__(self, key) -> np.ndarray:
-        if isinstance(key, int):
+        if np.issubdtype(type(key), np.integer):
             return self._get_frame(key)
         if isinstance(key, slice):  # Support slicing
             key = (key,)  # Logic is handled in the tuple case below
@@ -351,7 +351,7 @@ class VideoStreamer:
             raise TypeError('Key must be an int, slice, or a tuple of ints/slices')
 
         frame_idx = key[0]
-        if isinstance(frame_idx, int):
+        if np.issubdtype(type(frame_idx), np.integer):
             frames = self._get_frame(frame_idx)
             key = key[1:]
         elif isinstance(frame_idx, slice):  # Support slicing
@@ -359,7 +359,7 @@ class VideoStreamer:
             frames = np.array([self._get_frame(i) for i in range(start, stop, step)])
             key = (slice(None),) + key[1:]
         elif isinstance(frame_idx, (list, tuple, np.ndarray)):  # Support sequences of ints
-            if not all(isinstance(i, int) for i in frame_idx):
+            if not all(utils.isint(frame_idx)):
                 raise TypeError('Sequences of frame indices must contain only integers')
             frames = np.array([self._get_frame(i) for i in frame_idx])
             key = (slice(None),) + key[1:]
