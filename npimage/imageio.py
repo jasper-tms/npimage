@@ -411,7 +411,9 @@ def show(data,
     if utils.isint(channel_axis) and channel_axis != -1:
         data = np.moveaxis(data, utils.find_channel_axis(data), -1)
 
-    if convert_to_8bit and data.dtype != np.uint8:
+    if data.dtype == np.bool:
+        data = data.astype(np.uint8) * 255
+    elif convert_to_8bit and data.dtype != np.uint8:
         if any(key in convert_kwargs for key in
                 ['bottom_value', 'bottom_percentile', 'top_value', 'top_percentile']):
             if 'maximize_contrast' not in convert_kwargs:
