@@ -411,7 +411,7 @@ def show(data,
     if utils.isint(channel_axis) and channel_axis != -1:
         data = np.moveaxis(data, utils.find_channel_axis(data), -1)
 
-    if data.dtype == np.bool:
+    if data.dtype == bool:
         data = data.astype(np.uint8) * 255
     elif convert_to_8bit and data.dtype != np.uint8:
         if any(key in convert_kwargs for key in

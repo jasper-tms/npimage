@@ -67,6 +67,10 @@ def isint(n):
     This function does NOT recognize integer types from other packages
       including TensorFlow, PyTorch, or JAX.
     """
+    if isinstance(n, np.ndarray) and n.ndim > 1:
+        raise TypeError("npimage.isint is meant for scalars and vectors,"
+                        " not matrices. Use np.issubdtype(n.dtype, np.integer)"
+                        " directly if you want to check your array's type.")
     try:
         return [np.issubdtype(type(a), np.integer) for a in n]
     except TypeError:
