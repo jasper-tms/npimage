@@ -134,6 +134,10 @@ def cast(image: np.ndarray,
     else:
         raise TypeError(f'Unsupported dtype: {output_dtype}')
 
+    if (bottom_value is not None or top_value is not None
+            or bottom_percentile != 0.05 or top_percentile != 99.95):
+        maximize_contrast = True
+
     if not maximize_contrast:
         if (round_before_cast_to_int
                 and np.issubdtype(output_dtype, np.integer)
