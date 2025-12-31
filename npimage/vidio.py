@@ -149,7 +149,26 @@ class VideoSeekError(RuntimeError):
 
 
 class VideoStreamer:
-    def __init__(self, filename, verbose: bool = False):
+    def __init__(self,
+                 filename: str,
+                 verbose: bool = False,
+                 cache_index: Literal['auto', True, False] = 'auto'):
+        """
+        Parameters
+        ----------
+        filename : str
+            Path to the video file.
+
+        verbose : bool, default False
+            If True, print progress messages.
+
+        cache_index : 'auto' (default), True, or False
+            **Definitely set this to True in code where speed matters!**
+            Whether to cache the frame timestamp index to a .index file
+            next to the video file for faster loading next time.
+            If 'auto', the index is cached only if building it takes
+            more than 0.5 seconds, which only happens for ~1+ GB videos.
+        """
         self.av = _import_av()
         self.verbose = verbose
         self.filename = Path(filename).expanduser()
@@ -170,11 +189,16 @@ class VideoStreamer:
         self._lock = threading.Lock()
 
         self.index_filename = self.filename.with_suffix(self.filename.suffix + '.index')
-        self._load_index()
+        self._build_index(cache_index=cache_index)
 
-    def _build_index(self):
+    def _build_index(self, cache_index='auto'):
+        if self.index_filename.exists():
+            return self._load_index()
         if self.verbose:
             print('Building frame timestamp index for fast random frame access...')
+
+        import time
+        start_time = time.time()
 
         frames_pts = []
         # Try getting frame PTS values fast using PyAV
@@ -250,15 +274,16 @@ class VideoStreamer:
             index['frames_pts'] = frames_pts
         else:
             index['pts0'] = self.pts0
-        with open(self.index_filename, 'w') as f:
-            json.dump(index, f)
-        if self.verbose:
-            print(f'Cached index at "{self.index_filename}"')
+
+        if cache_index is True or (cache_index == 'auto'
+                                   and time.time() - start_time > 0.5):
+            with open(self.index_filename, 'w') as f:
+                json.dump(index, f)
+            if self.verbose:
+                print(f'Cached index at "{self.index_filename}"')
 
     def _load_index(self):
-        if not self.index_filename.exists():
-            self._build_index()
-        elif self.verbose:
+        if self.verbose:
             print(f'Loading frame timestamp index from "{self.index_filename}"')
 
         with open(self.index_filename, 'r') as f:
