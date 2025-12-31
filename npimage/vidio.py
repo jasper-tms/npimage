@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Functions for reading and writing videos.
+Functions for reading and writing video files.
 
 Function list:
 - load_video(filename) -> np.ndarray
 - lazy_load_video(filename) -> Iterator[np.ndarray]
-- save_video(data, filename) -> Saves a (time, height, width[, channels])
-    numpy array of pixel values as a video file.
+- save_video(data, filename) -> None
+    Saves a numpy array of pixel values as a video file.
     Arguments for setting framerate, video bitrate, etc are provided.
 
 Class list:
@@ -137,10 +137,13 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
         Video frame as a numpy array, shape (height, width, colors).
     """
     av = _import_av()
+    rotation = _get_rotation_from_metadata(filename)
     with av.open(Path(filename).expanduser()) as container:
         stream = container.streams.video[0]
         for frame in container.decode(stream):
             img = frame.to_ndarray(format='rgb24')
+            if rotation not in [None, '0', 0]:
+                img = np.rot90(img, k=-int(rotation) // 90)
             yield img
 
 
