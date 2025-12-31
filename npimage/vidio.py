@@ -25,6 +25,7 @@ import json
 from fractions import Fraction
 
 import numpy as np
+from tqdm import tqdm
 
 from . import utils
 
@@ -42,6 +43,15 @@ codec_aliases = {
 }
 
 supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm']
+
+
+def _import_av():
+    try:
+        import av
+        return av
+    except ImportError:
+        raise ImportError('Missing optional dependency for video processing,'
+                          ' run `pip install av` and try again')
 
 
 def load_video(filename,
@@ -69,13 +79,7 @@ def load_video(filename,
         framerate : float
             The frame rate of the video in frames per second
     """
-    try:
-        import av
-        from tqdm import tqdm
-    except ImportError:
-        raise ImportError('Missing optional dependency for video processing,'
-                          ' run `pip install av tqdm`')
-
+    av = _import_av()
     with av.open(filename) as container:
         stream = container.streams.video[0]
         num_frames = stream.frames
@@ -132,11 +136,7 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
     frame : np.ndarray
         Video frame as a numpy array, shape (height, width, colors).
     """
-    try:
-        import av
-    except ImportError:
-        raise ImportError('Missing optional dependency for video processing,'
-                          ' run `pip install av tqdm`')
+    av = _import_av()
     with av.open(Path(filename).expanduser()) as container:
         stream = container.streams.video[0]
         for frame in container.decode(stream):
@@ -150,18 +150,13 @@ class VideoSeekError(RuntimeError):
 
 class VideoStreamer:
     def __init__(self, filename, verbose: bool = False):
-        try:
-            import av
-            self.av = av
-        except ImportError:
-            raise ImportError('Missing optional dependency for video processing,'
-                              ' run `pip install av tqdm`')
+        self.av = _import_av()
         self.verbose = verbose
         self.filename = Path(filename).expanduser()
         if not self.filename.exists():
             raise FileNotFoundError(f'File {filename} not found')
 
-        self.container = av.open(str(self.filename))
+        self.container = self.av.open(str(self.filename))
         self.stream = self.container.streams.video[0]
         self.time_base = self.stream.time_base
         self._frame_iterator = self.container.decode(self.stream)
@@ -550,12 +545,7 @@ class AVVideoWriter:
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
                  codec: Literal['libx264', 'libx265'] = 'libx264',
                  overwrite=False):
-        try:
-            import av
-        except ImportError:
-            raise ImportError('Missing optional dependency for video processing,'
-                              ' run `pip install av tqdm`')
-        self.av = av
+        self.av = _import_av()
         filename = Path(filename).expanduser()
         if filename.exists() and not overwrite:
             raise FileExistsError(f'File {filename} already exists. '
@@ -565,7 +555,7 @@ class AVVideoWriter:
         self.crf = crf
         self.compression_speed = compression_speed
         self.codec = codec_aliases[codec.lower()]
-        self.container = av.open(filename, mode='w')
+        self.container = self.av.open(filename, mode='w')
         self.stream = self.container.add_stream(self.codec, rate=self._framerate)
         self.stream.pix_fmt = 'yuv420p'
         self.stream.options = {'crf': str(crf), 'preset': compression_speed}
@@ -849,11 +839,6 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         The video codec to use for encoding. Can be any of a number of aliases for
         these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
     """
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        raise ImportError('Missing optional dependency for video processing,'
-                          ' run `pip install av tqdm`')
 
     filename = str(filename)
     if filename.split('.')[-1].lower() not in supported_extensions:
