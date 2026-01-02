@@ -394,7 +394,7 @@ def show(data,
             data = load(data)
 
     if data_type == 'segmentation':
-        data = utils.assign_random_colors(data, seed=kwargs.get('seed', None))
+        data = operations.assign_random_colors(data, seed=kwargs.get('seed', None))
 
     if (not data.ndim == 2) and not (data.ndim == 3 and utils.find_channel_axis(data) is not None):
         m = ('Data must have shape (y, x) for grayscale, '
