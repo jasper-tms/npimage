@@ -29,6 +29,12 @@ from tqdm import tqdm
 
 from . import utils
 
+try:
+    from PIL import Image, ImageSequence
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
 codec_aliases = {
     'libx264': 'libx264',
     'avc1': 'libx264',
@@ -42,7 +48,7 @@ codec_aliases = {
     'H.265': 'libx265',
 }
 
-supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm']
+supported_extensions = ['mp4', 'gif']
 
 
 def _import_av():
@@ -59,11 +65,12 @@ def load_video(filename,
                progress_bar=True) -> Union[np.ndarray, Tuple[np.ndarray, float]]:
     """
     Load all images in a video file as a numpy array.
+    Supports MP4 and GIF formats.
 
     Parameters
     ----------
     filename : str
-        Path to the video file
+        Path to the video file (MP4 or GIF)
     return_framerate : bool, default False
         If True, return the frame rate of the video
     progress_bar : bool, default True
@@ -73,12 +80,17 @@ def load_video(filename,
     -------
     If return_framerate is False:
         data : numpy.ndarray
-            The video frames as a numpy array, shape (num_frames, height, width, colors)
+            The video frames as a numpy array, shape (num_frames, height, width, 3)
     If return_framerate is True:
         (data, framerate) : tuple, where data is as above and:
         framerate : float
             The frame rate of the video in frames per second
     """
+    # Check if it's a GIF file
+    filename_str = str(filename)
+    if filename_str.lower().endswith('.gif'):
+        return _load_gif(filename, return_framerate=return_framerate, progress_bar=progress_bar)
+    
     av = _import_av()
     with av.open(filename) as container:
         stream = container.streams.video[0]
@@ -825,7 +837,8 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
                dim_order='yx', framerate=30, crf=23, compression_speed='medium',
                progress_bar=True, codec: Literal['libx264', 'libx265'] = 'libx264') -> None:
     """
-    Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
+    Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video.
+    Supports MP4 and GIF formats.
 
     Follows the PyAV cookbook section on generating video from numpy arrays:
     https://pyav.basswood-io.com/docs/develop/cookbook/numpy.html#generating-video
@@ -836,7 +849,7 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         A 3D (grayscale) or 4D (RGB) numpy array of pixel values.
 
     filename : str
-        The filename to save the video to.
+        The filename to save the video to (MP4 or GIF).
 
     time_axis : int, default 0
         The axis of the data array that will be played as time in the video.
@@ -853,28 +866,39 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         The order of the spatial dimensions in the input data.
 
     framerate : int, default 30
-        The frame rate of the video.
+        The frame rate of the video (or for GIF: frames per second converted to ms duration).
 
     crf : int, default 23
-        Constant Rate Factor that specifies amount of lossiness allowed in compression.
+        Constant Rate Factor (MP4 only) that specifies amount of lossiness allowed in compression.
         Lower values produce better quality, larger videos. crf=17 has no human-visible
         compression artifacts. File size approximately doubles/halves each time you
         add/subtract 6 from crf, so crf=17 produces files about twice as large as
         the default crf=23.
 
     compression_speed : str, default 'medium'
-        Compression speed preset: 'ultrafast', 'superfast', 'veryfast',
+        Compression speed preset (MP4 only): 'ultrafast', 'superfast', 'veryfast',
         'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'.
 
     progress_bar : bool, default True
         If True, display a progress bar.
 
     codec : Literal['libx264', 'libx265'], default 'libx264'
-        The video codec to use for encoding. Can be any of a number of aliases for
+        The video codec to use for encoding (MP4 only). Can be any of a number of aliases for
         these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
     """
 
     filename = str(filename)
+    
+    # Auto-add extension if missing
+    if not any(filename.lower().endswith(ext) for ext in ['.mp4', '.gif']):
+        filename += '.mp4'
+    
+    # Check if it's a GIF
+    if filename.lower().endswith('.gif'):
+        return _save_gif(data, filename, time_axis=time_axis, color_axis=color_axis,
+                        overwrite=overwrite, dim_order=dim_order, framerate=framerate,
+                        progress_bar=progress_bar)
+    
     if filename.split('.')[-1].lower() not in supported_extensions:
         filename += '.mp4'
     filename = Path(filename).expanduser()
@@ -961,3 +985,126 @@ def _get_rotation_from_metadata(filename):
     except (json.JSONDecodeError, KeyError, ValueError):
         pass
     return None
+
+
+def _load_gif(filename, return_framerate=False, progress_bar=True):
+    """Load a GIF file and return frames as numpy array."""
+    if not PIL_AVAILABLE:
+        raise ImportError('Missing optional dependency for GIF processing. '
+                         'Run `pip install pillow` and try again.')
+    
+    filename = Path(filename).expanduser()
+    if not filename.exists():
+        raise FileNotFoundError(f'File not found: {filename}')
+    
+    img = Image.open(filename)
+    
+    if img.format != 'GIF':
+        raise ValueError(f'File is not a GIF. Format: {img.format}')
+    
+    # Extract framerate from duration (ms per frame -> fps)
+    duration_ms = img.info.get('duration', 100)  # Default 100ms = 10fps
+    framerate = 1000.0 / duration_ms if duration_ms > 0 else 10.0
+    
+    # Load all frames
+    frames = []
+    iterator = ImageSequence.Iterator(img)
+    if progress_bar:
+        try:
+            total = getattr(img, 'n_frames', None)
+            iterator = tqdm(iterator, total=total, desc='Loading GIF')
+        except:
+            pass
+    
+    for frame in iterator:
+        # Convert to RGB (handles palette mode and transparency)
+        frame_rgb = frame.convert('RGB')
+        frame_array = np.array(frame_rgb)
+        frames.append(frame_array)
+    
+    img.close()
+    
+    # Stack into single array
+    data = np.stack(frames, axis=0)
+    
+    if return_framerate:
+        return data, framerate
+    else:
+        return data
+
+
+def _save_gif(data, filename, time_axis=0, color_axis=None, overwrite=False,
+              dim_order='yx', framerate=30, progress_bar=True):
+    """Save numpy array as an animated GIF."""
+    if not PIL_AVAILABLE:
+        raise ImportError('Missing optional dependency for GIF processing. '
+                         'Run `pip install pillow` and try again.')
+    
+    filename = Path(filename).expanduser()
+    if filename.exists() and not overwrite:
+        raise FileExistsError(f'File {filename} already exists. '
+                             'Set overwrite=True to overwrite.')
+    
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
+    
+    # Handle axes (same logic as save_video)
+    if color_axis is None and data.ndim == 4:
+        color_axis = utils.find_channel_axis(data, possible_channel_lengths=3)
+        if color_axis is None:
+            raise ValueError('4D input data must have an RGB (length 3) axis.')
+    
+    if color_axis is not None:
+        if data.ndim != 4:
+            raise ValueError('Input data must be 4D when color_axis is specified.')
+        data = np.moveaxis(data, time_axis, 0)
+        if color_axis != -1:
+            data = np.moveaxis(data, color_axis, -1)
+        if 'xy' in dim_order:
+            data = data.swapaxes(1, 2)
+        n_frames = data.shape[0]
+        height, width, channels = data.shape[1:]
+        if channels != 3:
+            raise ValueError(f'Color video must have 3 channels (RGB) but had {channels}.')
+    else:
+        # Grayscale
+        if data.ndim != 3:
+            raise ValueError('Input data must be 3D when color_axis is not specified.')
+        data = np.moveaxis(data, time_axis, 0)
+        if 'xy' in dim_order:
+            data = data.swapaxes(1, 2)
+        n_frames = data.shape[0]
+        # Convert grayscale to RGB for GIF
+        data = np.stack([data, data, data], axis=-1)
+    
+    # Ensure uint8
+    if data.dtype != np.uint8:
+        if data.max() <= 1.0:
+            data = (data * 255).astype(np.uint8)
+        else:
+            data = data.astype(np.uint8)
+    
+    # Convert framerate to duration (ms per frame)
+    duration_ms = int(1000.0 / framerate)
+    
+    # Convert frames to PIL Images
+    pil_frames = []
+    frame_range = range(n_frames)
+    if progress_bar:
+        frame_range = tqdm(frame_range, desc='Saving GIF')
+    
+    for i in frame_range:
+        frame = data[i]
+        pil_frame = Image.fromarray(frame, mode='RGB')
+        pil_frames.append(pil_frame)
+    
+    # Save as animated GIF
+    pil_frames[0].save(
+        filename,
+        format='GIF',
+        save_all=True,
+        append_images=pil_frames[1:],
+        duration=duration_ms,
+        loop=0,  # Infinite loop
+        optimize=False  # Set to True for smaller files but slower encoding
+    )
