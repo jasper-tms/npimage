@@ -256,7 +256,7 @@ class VideoStreamer:
         pts_deltas = np.diff(frames_pts) if len(frames_pts) > 1 else None
         if pts_deltas is not None and (pts_deltas == pts_deltas[0]).all():
             # The video is constant framerate
-            self.pts_delta = pts_deltas[0]
+            self.pts_delta = int(pts_deltas[0])
             self._framerate = 1 / (self.pts_delta * self.time_base)
             if self._framerate.denominator == 1:
                 self._framerate = self._framerate.numerator
