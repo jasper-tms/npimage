@@ -40,6 +40,19 @@ codec_aliases = {
     'hev1': 'libx265',
     'h265': 'libx265',
     'H.265': 'libx265',
+    'libvpx': 'libvpx',
+    'vp8': 'libvpx',
+    'libvpx-vp9': 'libvpx-vp9',
+    'vp9': 'libvpx-vp9',
+}
+
+# Default codec for each container format
+extension_default_codecs = {
+    'mp4': 'libx264',
+    'mkv': 'libx264',
+    'avi': 'libx264',
+    'mov': 'libx264',
+    'webm': 'libvpx-vp9',
 }
 
 supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm']
@@ -572,12 +585,13 @@ class AVVideoWriter:
     compression_speed : str, default 'medium'
         Compression speed preset: 'ultrafast', 'superfast', 'veryfast',
         'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'.
-    codec : Literal['libx264', 'libx265'], default 'libx264'
-        The video codec to use for encoding. Can be any of a number of aliases for
-        these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
+    codec : str or None, default None
+        The video codec to use for encoding. If None, automatically chosen based
+        on the file extension (e.g. libx264 for .mp4, libvpx-vp9 for .webm).
+        Accepts aliases like h264, h265, vp8, vp9, etc.
     """
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
-                 codec: Literal['libx264', 'libx265'] = 'libx264',
+                 codec: Literal['libx264', 'libx265', 'libvpx', 'libvpx-vp9', None] = None,
                  overwrite=False):
         self.av = _import_av()
         filename = Path(filename).expanduser()
@@ -588,11 +602,20 @@ class AVVideoWriter:
         self._framerate = utils.limit_fraction(framerate)
         self.crf = crf
         self.compression_speed = compression_speed
-        self.codec = codec_aliases[codec.lower()]
+
+        if codec is None:
+            ext = filename.suffix.lower().lstrip('.')
+            self.codec = extension_default_codecs.get(ext, 'libx264')
+        else:
+            self.codec = codec_aliases[codec.lower()]
+
         self.container = self.av.open(filename, mode='w')
         self.stream = self.container.add_stream(self.codec, rate=self._framerate)
         self.stream.pix_fmt = 'yuv420p'
-        self.stream.options = {'crf': str(crf), 'preset': compression_speed}
+        if self.codec in ('libvpx', 'libvpx-vp9'):
+            self.stream.options = {'crf': str(crf), 'b:v': '0'}
+        else:
+            self.stream.options = {'crf': str(crf), 'preset': compression_speed}
         self._closed = False
         self.stream.width = 0
         self.stream.height = 0
@@ -676,14 +699,15 @@ class FFmpegVideoWriter:
     compression_speed : str, default 'medium'
         Compression speed preset: 'ultrafast', 'superfast', 'veryfast',
         'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'.
-    codec : Literal['libx264', 'libx265'], default 'libx264'
-        The video codec to use for encoding. Can be any of a number of aliases for
-        these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
+    codec : str or None, default None
+        The video codec to use for encoding. If None, automatically chosen based
+        on the file extension (e.g. libx264 for .mp4, libvpx-vp9 for .webm).
+        Accepts aliases like h264, h265, vp8, vp9, etc.
     overwrite : bool, default False
         Whether to overwrite the file if it already exists.
     """
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
-                 codec: Literal['libx264', 'libx265'] = 'libx264',
+                 codec: Literal['libx264', 'libx265', 'libvpx', 'libvpx-vp9', None] = None,
                  overwrite=False):
         filename = Path(filename).expanduser()
         if filename.exists() and not overwrite:
@@ -693,7 +717,12 @@ class FFmpegVideoWriter:
         self._framerate = utils.limit_fraction(framerate)
         self.crf = crf
         self.compression_speed = compression_speed
-        self.codec = codec_aliases[codec.lower()]
+
+        if codec is None:
+            ext = filename.suffix.lower().lstrip('.')
+            self.codec = extension_default_codecs.get(ext, 'libx264')
+        else:
+            self.codec = codec_aliases[codec.lower()]
 
         # Initialize process state
         self._process = None
@@ -725,9 +754,13 @@ class FFmpegVideoWriter:
             '-c:v', self.codec,
             '-pix_fmt', 'yuv420p',  # Output pixel format
             '-crf', str(self.crf),
-            '-preset', self.compression_speed,
-            self.filename
         ]
+        if self.codec in ('libvpx', 'libvpx-vp9'):
+            # VP8/VP9 need -b:v 0 for constant quality (CRF) mode
+            command += ['-b:v', '0']
+        else:
+            command += ['-preset', self.compression_speed]
+        command.append(str(self.filename))
 
         # Start FFmpeg process
         self._process = subprocess.Popen(
@@ -823,7 +856,7 @@ VideoWriter = FFmpegVideoWriter
 
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
                dim_order='yx', framerate=30, crf=23, compression_speed='medium',
-               progress_bar=True, codec: Literal['libx264', 'libx265'] = 'libx264') -> None:
+               progress_bar=True, codec: Literal['libx264', 'libx265', 'libvpx', 'libvpx-vp9', None] = None) -> None:
     """
     Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
 
@@ -869,9 +902,10 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
     progress_bar : bool, default True
         If True, display a progress bar.
 
-    codec : Literal['libx264', 'libx265'], default 'libx264'
-        The video codec to use for encoding. Can be any of a number of aliases for
-        these two codecs, including avc1/h264 vs hevc/hvc1/hev1/h265.
+    codec : str or None, default None
+        The video codec to use for encoding. If None, automatically chosen based
+        on the file extension (e.g. libx264 for .mp4, libvpx-vp9 for .webm).
+        Accepts aliases like h264, h265, vp8, vp9, etc.
     """
 
     filename = str(filename)
