@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'numpyimage'
-version = '3.5.2'
+version = '3.5.3'
 description = 'Load, save, & manipulate image files as numpy arrays'
 readme.file = 'README.md'
 readme.content-type = 'text/markdown'
