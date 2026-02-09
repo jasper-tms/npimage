@@ -637,13 +637,20 @@ def get_voxels_within_distance(distance, center=None, ndims=None,
     """
     Generates a list of voxel coordinates within a given distance of a given
     center point.
-        center, tuple   : Voxel coordinate to be used as the center.
-                            Defaults to the origin.
-        distance, float : How far away from the center point to include.
-        metric, string    : How to calculate distance. Options are:
-                              euclidian (default)
-                              manhattan (sum of coordinates)
-                              chebyshev (max of coordinates)
+
+    Parameters
+    ----------
+    center : tuple
+        Voxel coordinate to be used as the center. Defaults to the origin.
+
+    distance : float
+        How far away from the center point to include.
+
+    metric : string, default 'euclidian'
+        How to calculate distance. Options are:
+        - euclidian (default)
+        - manhattan (sum of coordinates)
+        - chebyshev (max of coordinates)
     """
     assert metric in ['euclidian', 'manhattan', 'chebyshev']
 
