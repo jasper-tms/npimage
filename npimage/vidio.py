@@ -55,7 +55,7 @@ extension_default_codecs = {
     'webm': 'libvpx-vp9',
 }
 
-supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm']
+supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'gif']
 
 
 def _import_av():
@@ -856,7 +856,9 @@ VideoWriter = FFmpegVideoWriter
 
 def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
                dim_order='yx', framerate=30, crf=23, compression_speed='medium',
-               progress_bar=True, codec: Literal['libx264', 'libx265', 'libvpx', 'libvpx-vp9', None] = None) -> None:
+               progress_bar=True, codec: Literal['libx264', 'libx265', 'libvpx',
+                                                 'libvpx-vp9', None] = None
+               ) -> None:
     """
     Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
 
@@ -953,6 +955,36 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
             pad[2][1] = 1
         if pad != [[0, 0], [0, 0], [0, 0]]:
             data = np.pad(data, pad, mode='edge')
+
+    if extension == 'gif':
+        from PIL import Image
+        pil_images = [Image.fromarray(frame) for frame in data]
+
+        # GIF frame delays must be multiples of 10ms, so GIF doesn't
+        # natively suppport framerates like 30 fps which require an
+        # inter-frame delay of 33.33 ms. To support arbitrary
+        # framerates, we copy the solution used in ffmpeg which is to
+        # use variable inter-frame intervals: 30 ms some frames and 40 ms
+        # others to achieve an average interval of 33.33 ms (for the
+        # example of 30 fps). Implementation of alternating delays:
+        ideal_delay_cs = 100 / framerate
+        lo = int(ideal_delay_cs)
+        hi = lo + 1
+        durations_ms = []
+        accumulated = 0.0
+        for _ in range(len(pil_images)):
+            accumulated += ideal_delay_cs
+            if accumulated >= hi:
+                durations_ms.append(hi * 10)
+                accumulated -= hi
+            else:
+                durations_ms.append(lo * 10)
+                accumulated -= lo
+
+        pil_images[0].save(filename, format='GIF', save_all=True,
+                           append_images=pil_images[1:],
+                           duration=durations_ms, loop=0)
+        return
 
     with VideoWriter(filename, framerate=framerate, crf=crf,
                      compression_speed=compression_speed, codec=codec,
