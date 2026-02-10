@@ -92,6 +92,30 @@ def load_video(filename,
         framerate : float
             The frame rate of the video in frames per second
     """
+    extension = Path(filename).suffix.lower().lstrip('.')
+    if extension == 'gif':
+        from PIL import Image
+        frames = []
+        durations = []
+        with Image.open(filename) as img:
+            while True:
+                frames.append(np.array(img.convert('RGB')))
+                durations.append(img.info.get('duration', None))
+                try:
+                    img.seek(img.tell() + 1)
+                except EOFError:
+                    break
+        data = np.array(frames)
+        if return_framerate:
+            if None in durations:
+                raise ValueError('Cannot return framerate for GIF because one or'
+                                 ' more frames are missing duration metadata')
+            if len(durations) == 0:
+                return data, None
+            framerate = 1000 / np.mean(durations)
+            return data, float(framerate)
+        return data
+
     av = _import_av()
     with av.open(filename) as container:
         stream = container.streams.video[0]
@@ -133,7 +157,7 @@ def load_video(filename,
 
 def lazy_load_video(filename) -> Iterator[np.ndarray]:
     """
-    Lazily load video frames as numpy arrays using PyAV.
+    Lazily load video frames as numpy arrays using PyAV (or using PIL for gifs)
 
     This iterator yields images in the order they appear in the video.
     If you want reasonably fast random access to arbitrary frames in
@@ -149,6 +173,19 @@ def lazy_load_video(filename) -> Iterator[np.ndarray]:
     frame : np.ndarray
         Video frame as a numpy array, shape (height, width, colors).
     """
+    extension = Path(filename).suffix.lower().lstrip('.')
+    if extension == 'gif':
+        from PIL import Image
+        with Image.open(filename) as img:
+            while True:
+                img_array = np.array(img.convert('RGB'))
+                yield img_array
+                try:
+                    img.seek(img.tell() + 1)
+                except EOFError:
+                    break
+        return
+
     av = _import_av()
     rotation = _get_rotation_from_metadata(filename)
     with av.open(Path(filename).expanduser()) as container:
@@ -185,6 +222,10 @@ class VideoStreamer:
             If 'auto', the index is cached only if building it takes
             more than 0.5 seconds, which only happens for ~1+ GB videos.
         """
+        extension = Path(filename).suffix.lower().lstrip('.')
+        if extension == 'gif':
+            raise NotImplementedError('Streaming from gifs not yet implemented. '
+                                      'Use load_video() or lazy_load_video() instead.')
         self.av = _import_av()
         self.verbose = verbose
         self.filename = Path(filename).expanduser()
@@ -595,6 +636,10 @@ class AVVideoWriter:
                  overwrite=False):
         self.av = _import_av()
         filename = Path(filename).expanduser()
+        extension = filename.suffix.lower().lstrip('.')
+        if extension == 'gif':
+            raise NotImplementedError('Saving to GIF format not yet implemented. '
+                                      'Use save_video() instead.')
         if filename.exists() and not overwrite:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
