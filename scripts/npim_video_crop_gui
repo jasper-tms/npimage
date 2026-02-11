@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""
+Interactive GUI for visually selecting start/end frames in a video,
+then cropping to that range.
+
+Completely decodes and reencodes from scratch to ensure
+that first frame's timestamp is 0, avoiding black initial
+frames that can occur when using ffmpeg to crop a video.
+
+Does not copy audio.
+
+Usage:
+    npim_video_crop_gui video.mp4
+"""
+
+import io
+import sys
+import json
+import threading
+import webbrowser
+from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+import numpy as np
+from PIL import Image
+
+import npimage
+
+HTML_PAGE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Crop</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 { font-size: 18px; margin-bottom: 12px; color: #aaa; font-weight: 400; }
+  #frame-display {
+    max-width: 90vw;
+    max-height: 60vh;
+    border: 1px solid #333;
+    background: #000;
+  }
+  #info-bar {
+    margin: 12px 0 8px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    color: #ccc;
+  }
+  #slider-container {
+    width: 80vw;
+    max-width: 900px;
+    position: relative;
+    margin: 8px 0 4px;
+  }
+  #frame-slider {
+    width: 100%;
+    cursor: pointer;
+    accent-color: #5e81ac;
+  }
+  #markers {
+    position: relative;
+    width: 100%;
+    height: 8px;
+  }
+  .marker {
+    position: absolute;
+    top: 0;
+    width: 3px;
+    height: 8px;
+    transform: translateX(-1px);
+  }
+  .marker.start { background: #a3be8c; }
+  .marker.end { background: #bf616a; }
+  .range-highlight {
+    position: absolute;
+    top: 2px;
+    height: 4px;
+    background: rgba(94, 129, 172, 0.4);
+  }
+  #nav-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  #nav-buttons button {
+    padding: 6px 14px;
+    border: 1px solid #444;
+    background: #2a2a3e;
+    color: #e0e0e0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #nav-buttons button:hover { background: #3a3a5e; }
+  #action-buttons {
+    display: flex;
+    gap: 12px;
+    margin: 14px 0;
+  }
+  #action-buttons button {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  #btn-start { background: #a3be8c; color: #1a1a2e; }
+  #btn-end { background: #bf616a; color: #fff; }
+  #btn-crop { background: #5e81ac; color: #fff; }
+  #btn-crop:disabled { background: #3b4d63; color: #888; cursor: not-allowed; }
+  #selection-info {
+    font-size: 13px;
+    color: #999;
+    margin-bottom: 8px;
+    min-height: 18px;
+  }
+  #status {
+    margin-top: 10px;
+    font-size: 14px;
+    min-height: 20px;
+  }
+  .key-hint {
+    font-size: 11px;
+    color: #666;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<h1 id="title">Video Crop</h1>
+<img id="frame-display" />
+<div id="info-bar">Loading...</div>
+<div id="slider-container">
+  <input id="frame-slider" type="range" min="0" max="0" value="0" />
+  <div id="markers"></div>
+</div>
+<div id="nav-buttons">
+  <button onclick="jump(-10)" title="-10 frames">&laquo; 10</button>
+  <button onclick="jump(-1)" title="-1 frame">&lsaquo; 1</button>
+  <button onclick="jump(1)" title="+1 frame">1 &rsaquo;</button>
+  <button onclick="jump(10)" title="+10 frames">10 &raquo;</button>
+</div>
+<div id="selection-info"></div>
+<div id="action-buttons">
+  <button id="btn-start" onclick="setStart()">Set Start Frame</button>
+  <button id="btn-end" onclick="setEnd()">Set End Frame</button>
+  <button id="btn-crop" onclick="doCrop()" disabled>Crop</button>
+</div>
+<div id="status"></div>
+<div class="key-hint">Keys: &larr; or , = back 1 &nbsp; &rarr; or . = forward 1</div>
+
+<script>
+let info = null;
+let currentFrame = 0;
+let startFrame = null;
+let endFrame = null;
+
+const img = document.getElementById('frame-display');
+const slider = document.getElementById('frame-slider');
+const infoBar = document.getElementById('info-bar');
+const selInfo = document.getElementById('selection-info');
+const statusDiv = document.getElementById('status');
+const cropBtn = document.getElementById('btn-crop');
+
+async function init() {
+  const resp = await fetch('/info');
+  info = await resp.json();
+  document.getElementById('title').textContent = info.filename;
+  slider.max = info.n_frames - 1;
+  showFrame(0);
+}
+
+function showFrame(n) {
+  n = Math.max(0, Math.min(n, info.n_frames - 1));
+  currentFrame = n;
+  img.src = '/frame/' + n;
+  slider.value = n;
+  const time = (n / info.fps).toFixed(3);
+  infoBar.textContent = `Frame ${n} / ${info.n_frames - 1}  |  ${time}s  |  ${info.width}×${info.height}  |  ${info.fps.toFixed(2)} fps`;
+}
+
+slider.addEventListener('input', () => showFrame(parseInt(slider.value)));
+
+function jump(delta) {
+  showFrame(currentFrame + delta);
+}
+
+function setStart() {
+  startFrame = currentFrame;
+  updateSelection();
+}
+
+function setEnd() {
+  endFrame = currentFrame;
+  updateSelection();
+}
+
+function updateSelection() {
+  let parts = [];
+  if (startFrame !== null) parts.push(`Start: frame ${startFrame} (${(startFrame / info.fps).toFixed(3)}s)`);
+  if (endFrame !== null) parts.push(`End: frame ${endFrame} (${(endFrame / info.fps).toFixed(3)}s)`);
+  if (startFrame !== null && endFrame !== null) {
+    const nFrames = endFrame - startFrame + 1;
+    const dur = (nFrames / info.fps).toFixed(3);
+    parts.push(`Duration: ${nFrames} frames (${dur}s)`);
+  }
+  selInfo.textContent = parts.join('  |  ');
+  cropBtn.disabled = !(startFrame !== null && endFrame !== null && startFrame <= endFrame);
+  updateMarkers();
+}
+
+function updateMarkers() {
+  const container = document.getElementById('markers');
+  container.innerHTML = '';
+  const max = info.n_frames - 1;
+  if (startFrame !== null && endFrame !== null && startFrame < endFrame) {
+    const range = document.createElement('div');
+    range.className = 'range-highlight';
+    range.style.left = (startFrame / max * 100) + '%';
+    range.style.width = ((endFrame - startFrame) / max * 100) + '%';
+    container.appendChild(range);
+  }
+  if (startFrame !== null) {
+    const m = document.createElement('div');
+    m.className = 'marker start';
+    m.style.left = (startFrame / max * 100) + '%';
+    container.appendChild(m);
+  }
+  if (endFrame !== null) {
+    const m = document.createElement('div');
+    m.className = 'marker end';
+    m.style.left = (endFrame / max * 100) + '%';
+    container.appendChild(m);
+  }
+}
+
+async function doCrop() {
+  cropBtn.disabled = true;
+  statusDiv.textContent = 'Cropping...';
+  try {
+    const resp = await fetch('/crop', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({start_frame: startFrame, end_frame: endFrame})
+    });
+    const result = await resp.json();
+    if (result.error) {
+      statusDiv.textContent = 'Error: ' + result.error;
+    } else {
+      statusDiv.textContent = 'Saved: ' + result.output;
+    }
+  } catch (e) {
+    statusDiv.textContent = 'Error: ' + e.message;
+  }
+  cropBtn.disabled = false;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowLeft' || e.key === ',') { jump(-1); e.preventDefault(); }
+  if (e.key === 'ArrowRight' || e.key === '.') { jump(1); e.preventDefault(); }
+});
+
+init();
+</script>
+</body>
+</html>
+"""
+
+
+class VideoHandler(BaseHTTPRequestHandler):
+    stream = None
+
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            self.wfile.write(HTML_PAGE.encode())
+
+        elif self.path == '/info':
+            info = {
+                'n_frames': self.stream.n_frames,
+                'fps': self.stream.fps,
+                'width': self.stream.width,
+                'height': self.stream.height,
+                'filename': Path(self.stream.container.name).name,
+            }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(info).encode())
+
+        elif self.path.startswith('/frame/'):
+            try:
+                frame_num = int(self.path.split('/frame/')[1])
+                frame_num = max(0, min(frame_num, self.stream.n_frames - 1))
+                frame = self.stream[frame_num]
+                # Encode as JPEG
+                pil_img = Image.fromarray(frame)
+                buf = io.BytesIO()
+                pil_img.save(buf, format='JPEG', quality=85)
+                data = buf.getvalue()
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'public, max-age=86400')
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as e:
+                self.send_error(400, str(e))
+
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        if self.path == '/crop':
+            length = int(self.headers['Content-Length'])
+            body = json.loads(self.rfile.read(length))
+            start_frame = body['start_frame']
+            end_frame = body['end_frame']
+
+            fn = self.stream.container.name
+            out_name = f'{Path(fn).stem}_frames{start_frame}-{end_frame}.mp4'
+            out_fn = Path(fn).with_name(out_name)
+
+            try:
+                fps = self.stream.fps
+                with npimage.VideoWriter(str(out_fn), framerate=fps) as writer:
+                    for i in range(start_frame, end_frame + 1):
+                        writer.write(self.stream[i])
+
+                result = {'output': str(out_fn)}
+            except Exception as e:
+                result = {'error': str(e)}
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+        else:
+            self.send_error(404)
+
+    def log_message(self, format, *args):
+        # Suppress request logs
+        pass
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(f'Usage: {Path(sys.argv[0]).name} <video_file>')
+        sys.exit(1)
+
+    fn = sys.argv[1]
+    if not Path(fn).exists():
+        print(f'File not found: {fn}')
+        sys.exit(1)
+
+    print(f'Loading video: {fn}')
+    stream = npimage.VideoStreamer(fn)
+    print(f'{stream.n_frames} frames, {stream.fps:.2f} fps, '
+          f'{stream.width}x{stream.height}')
+
+    VideoHandler.stream = stream
+
+    port = 8787
+    server = HTTPServer(('127.0.0.1', port), VideoHandler)
+    url = f'http://127.0.0.1:{port}'
+    print(f'Serving at {url}')
+
+    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print('\nShutting down.')
+        server.shutdown()
+        stream.close()
+
+
+if __name__ == '__main__':
+    main()
