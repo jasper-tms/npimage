@@ -264,10 +264,11 @@ class VideoStreamer:
 
             with self.av.open(str(self.filename)) as container:
                 stream = container.streams.video[0]
+                start_pts = stream.start_time if stream.start_time is not None else 0
                 # Access as packets to only read metadata (fast), not pixel data (slow)
                 for packet in tqdm(container.demux(stream), total=stream.frames,
                                    desc='Indexing frames', disable=not self.verbose):
-                    if packet.pts is not None:
+                    if packet.pts is not None and packet.pts >= start_pts:
                         frames_pts.append(packet.pts)
 
             # demux gave us packets in the order they appeared in the file
