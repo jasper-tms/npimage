@@ -395,6 +395,8 @@ class VideoStreamer:
         return float(1.0 / self._framerate)
 
     def frame_number_to_pts(self, frame_number: int) -> int:
+        if hasattr(frame_number, '__iter__'):
+            return [self.frame_number_to_pts(n) for n in frame_number]
         frame_number = self._normalize_frame_number(frame_number)
         if self._framerate == 'variable':
             return self.frames_pts[frame_number]
@@ -402,9 +404,13 @@ class VideoStreamer:
             return int(frame_number) * self.pts_delta + self.pts0
 
     def frame_number_to_time(self, frame_number: int) -> float:
+        if hasattr(frame_number, '__iter__'):
+            return [self.frame_number_to_time(n) for n in frame_number]
         return float(self.frame_number_to_pts(frame_number) * self.time_base)
 
     def pts_to_frame_number(self, pts: int) -> int:
+        if hasattr(pts, '__iter__'):
+            return [self.pts_to_frame_number(p) for p in pts]
         if self._framerate == 'variable':
             if pts not in self.frames_pts:
                 raise ValueError(f'PTS {pts} not in video index.')
