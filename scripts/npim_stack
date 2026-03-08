@@ -20,6 +20,10 @@ def is_metadata_equal(m1, m2):
     Check whether two ordereddicts are equal, taking into account that
     numpy arrays must be compared element-wise
     """
+    if m1 is None and m2 is None:
+        return True
+    if m1 is None or m2 is None:
+        return False
     return all(
         k1 == k2 and (v1 == v2 if not isinstance(v1, np.ndarray) else (v1 == v2).all())
         for (k1, v1), (k2, v2) in zip(m1.items(), m2.items())
