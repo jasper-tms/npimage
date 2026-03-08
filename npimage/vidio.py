@@ -798,7 +798,8 @@ class FFmpegVideoWriter:
         # Check if width or height needs to be padded to an even value
         if (self._pixel_format_out == 'yuv420p'
                 and (width % 2 != 0 or height % 2 != 0)):
-            pad = [[0, 0], [0, 0], [0, 0]]  # [h, w, c]
+            pad = [[0, 0], [0, 0]]  # [h, w]
+            pad += [[0, 0]] if pixel_format_in == 'rgb24' else []
             if height % 2 != 0:
                 print('INFO: Height must be even for yuv420p pixel format but image'
                       f' has height {height}, so the bottom row will be duplicated.')
@@ -845,7 +846,6 @@ class FFmpegVideoWriter:
             stderr=subprocess.PIPE  # Capture errors
         )
         self._stdin = self._process.stdin
-
 
     def write(self, frame):
         """Write a frame to the video file"""
