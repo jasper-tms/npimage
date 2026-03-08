@@ -782,14 +782,37 @@ class FFmpegVideoWriter:
         self._closed = False
         self._width = None
         self._height = None
-        self._pixel_format = None
+        self._pixel_format_in = None
+        self._pixel_format_out = 'yuv420p'
 
     @property
     def framerate(self):
         return float(self._framerate)
 
-    def _initialize_process(self, width, height, pixel_format):
+    def _initialize_process(self, width, height, pixel_format_in):
         """Initialize the FFmpeg subprocess for video encoding"""
+        self._width = width
+        self._height = height
+        self._pixel_format_in = pixel_format_in
+
+        # Check if width or height needs to be padded to an even value
+        if (self._pixel_format_out == 'yuv420p'
+                and (width % 2 != 0 or height % 2 != 0)):
+            pad = [[0, 0], [0, 0], [0, 0]]  # [h, w, c]
+            if height % 2 != 0:
+                print('INFO: Height must be even for yuv420p pixel format but image'
+                      f' has height {height}, so the bottom row will be duplicated.')
+                pad[0][1] = 1
+                height = height + 1
+            if width % 2 != 0:
+                print('INFO: Width must be even for yuv420p pixel format but image'
+                      f' has width {width}, so the right column will be duplicated.')
+                pad[1][1] = 1
+                width = width + 1
+            self._pad = pad
+        else:
+            self._pad = 0
+
         command = [
             'ffmpeg',
             '-hide_banner',
@@ -799,12 +822,12 @@ class FFmpegVideoWriter:
             '-f', 'rawvideo',
             '-vcodec', 'rawvideo',
             '-s', f'{width}x{height}',
-            '-pix_fmt', pixel_format,
+            '-pix_fmt', pixel_format_in,  # Input pixel format comes before -i
             '-r', str(self._framerate),
             '-i', '-',  # Read from stdin
             '-an',  # No audio
             '-c:v', self.codec,
-            '-pix_fmt', 'yuv420p',  # Output pixel format
+            '-pix_fmt', self._pixel_format_out,  # Output pixel format after -i
             '-crf', str(self.crf),
         ]
         if self.codec in ('libvpx', 'libvpx-vp9'):
@@ -822,9 +845,7 @@ class FFmpegVideoWriter:
             stderr=subprocess.PIPE  # Capture errors
         )
         self._stdin = self._process.stdin
-        self._width = width
-        self._height = height
-        self._pixel_format = pixel_format
+
 
     def write(self, frame):
         """Write a frame to the video file"""
@@ -866,6 +887,9 @@ class FFmpegVideoWriter:
         if (width, height) != (self._width, self._height):
             raise ValueError(f'Cannot write image of size (w={width}, h={height}) to video'
                              f' already containing images of size {(self._width, self._height)}')
+
+        if self._pad:
+            frame = np.pad(frame, self._pad, mode='edge')
 
         # Convert frame to bytes and write to FFmpeg
         frame_bytes = frame.tobytes()
@@ -999,16 +1023,9 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         height, width = data.shape[1:]
 
     extension = filename.suffix.lower().lstrip('.')
-    if extension == 'mp4':
-        pad = [[0, 0], [0, 0], [0, 0]]
-        if height % 2 != 0:
-            pad[1][1] = 1
-        if width % 2 != 0:
-            pad[2][1] = 1
-        if pad != [[0, 0], [0, 0], [0, 0]]:
-            data = np.pad(data, pad, mode='edge')
 
     if extension == 'gif':
+        # We make gifs with PIL instead of using FFmpeg
         from PIL import Image
         pil_images = [Image.fromarray(frame) for frame in data]
 
