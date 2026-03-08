@@ -152,7 +152,8 @@ def save(data,
          units=None,
          compress=None,
          compression_level=3,
-         metadata=None) -> None:
+         metadata=None,
+         **kwargs) -> None:
     """
     Save a numpy array to file with a file type specified by the
     filename extension.
@@ -173,7 +174,12 @@ def save(data,
         raise FileExistsError(f'File {filename} already exists. '
                               'Set overwrite=True to overwrite.')
     extension = filename.split('.')[-1].lower()
+    if extension in vidio.supported_extensions:
+        return vidio.save_video(data, filename, dim_order=dim_order,
+                                overwrite=overwrite, **kwargs)
     assert extension in supported_extensions, f'Filetype {extension} not supported'
+    if kwargs:
+        raise TypeError(f'save() got unexpected keyword arguments: {list(kwargs.keys())}')
 
     if compress is not None and extension not in ['nrrd', 'ng']:
         print('WARNING: compress argument is ignored because not saving as '
