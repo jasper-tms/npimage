@@ -394,6 +394,10 @@ class VideoStreamer:
             return 'variable'
         return float(1.0 / self._framerate)
 
+    @property
+    def duration(self) -> float:
+        return float((self.frames_pts[-1] - self.frames_pts[0]) * self.time_base)
+
     def frame_number_to_pts(self, frame_number: int) -> int:
         if hasattr(frame_number, '__iter__'):
             return [self.frame_number_to_pts(n) for n in frame_number]
