@@ -41,6 +41,19 @@ all = [
     'av',
     'opencv-python-headless',
 ]
+dev = [
+    'av',
+    'opencv-python-headless',
+    'pytest',
+    'pytest-cov',
+    'psutil',
+]
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+markers = [
+    'slow: marks tests that shell out to ffmpeg or write real video files (deselect with -m "not slow")',
+]
 
 [tool.setuptools.packages.find]
 include = ['npimage']

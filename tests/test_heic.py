@@ -1,61 +1,58 @@
-#!/usr/bin/env python3
+"""Tests for HEIC read/write support."""
 
-import os
-import tempfile
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
+import pytest
+
 import npimage
 
 
-def test_heic_load_save():
-    """Test loading and saving HEIC images."""
-    # Create a simple test image
-    test_data = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+def test_heic_extension_registered():
+    """HEIC is in the set of supported file extensions."""
+    assert 'heic' in npimage.imageio.supported_extensions
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Test saving as HEIC
-        heic_filename = os.path.join(tmpdir, "test_image.heic")
 
+def test_heic_load_save_roundtrip(tmp_path):
+    """A uint8 RGB image roundtripped through HEIC keeps its shape and dtype."""
+    data = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+    path = tmp_path / 'test_image.heic'
+
+    npimage.save(data, str(path))
+    assert path.exists()
+
+    loaded = npimage.load(str(path))
+    assert loaded.shape == data.shape
+    assert loaded.dtype == np.uint8
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='guard only fires on macOS')
+def test_heic_guards_against_pyav_already_imported(tmp_path):
+    """
+    On macOS, importing PyAV before libheif causes a segfault inside
+    pillow_heif. npimage guards against this by raising a RuntimeError with a
+    clear message instead of letting the segfault happen.
+    """
+    script = textwrap.dedent(f"""
+        import av  # noqa: F401
+        import numpy as np
+        import npimage
+        data = np.zeros((10, 10, 3), dtype=np.uint8)
         try:
-            # Save the test data as HEIC
-            npimage.save(test_data, heic_filename)
-
-            # Verify the file was created
-            assert os.path.exists(heic_filename), "HEIC file was not created"
-
-            # Load the HEIC file back
-            loaded_data = npimage.load(heic_filename)
-
-            # Check that the loaded data has the same shape
-            assert loaded_data.shape == test_data.shape, f"Shape mismatch: expected {test_data.shape}, got {loaded_data.shape}"
-
-            # Check that the data type is correct
-            assert loaded_data.dtype == np.uint8, f"Data type mismatch: expected uint8, got {loaded_data.dtype}"
-
-            print("Test passed: HEIC load/save functionality works correctly.")
-
-        except Exception as e:
-            print(f"Test failed with error: {e}")
-            raise
-
-
-def test_heic_extension_support():
-    """Test that HEIC extension is properly recognized."""
-    # Test that HEIC is in the supported extensions
-    assert 'heic' in npimage.core.supported_extensions, "HEIC extension not in supported extensions"
-
-    # Test that the extension is properly parsed
-    filename = "test_image.heic"
-    extension = filename.split('.')[-1].lower()
-    assert extension == 'heic', f"Extension parsing failed: expected 'heic', got '{extension}'"
-
-    print("Test passed: HEIC extension is properly supported.")
-
-
-if __name__ == '__main__':
-    try:
-        test_heic_extension_support()
-        test_heic_load_save()
-        print("All HEIC tests passed!")
-    except Exception as e:
-        print(f"HEIC tests failed: {e}")
-        raise
+            npimage.save(data, r'{tmp_path / "x.heic"}')
+        except RuntimeError as e:
+            print('GUARD_FIRED:', e)
+            raise SystemExit(0)
+        raise SystemExit('guard did not fire')
+    """)
+    result = subprocess.run(
+        [sys.executable, '-c', script], capture_output=True, text=True
+    )
+    assert result.returncode == 0, (
+        f'subprocess exited {result.returncode}. stdout={result.stdout!r} '
+        f'stderr={result.stderr!r}'
+    )
+    assert 'GUARD_FIRED:' in result.stdout
+    assert 'PyAV' in result.stdout
