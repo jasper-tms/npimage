@@ -249,7 +249,7 @@ class VideoStreamer:
         self._build_index(cache_index=cache_index)
 
     def _build_index(self, cache_index='auto'):
-        if self.index_filename.exists():
+        if cache_index and self.index_filename.exists():
             return self._load_index()
         if self.verbose:
             print('Building frame timestamp index for fast random frame access...')
@@ -301,9 +301,8 @@ class VideoStreamer:
         if len(frames_pts) == 0:
             raise RuntimeError('No timestamps found in frame metadata')
 
-        self.frames_pts = frames_pts
         self.n_frames = len(frames_pts)
-        self.pts0 = self.frames_pts[0]
+        self.pts0 = frames_pts[0]
         self.rotation = _get_rotation_from_metadata(self.filename)
         index = {}
 
@@ -319,10 +318,14 @@ class VideoStreamer:
             else:
                 index['framerate'] = {'numerator': self._framerate.numerator,
                                       'denominator': self._framerate.denominator}
+            self.frames_pts = range(self.pts0,
+                                    self.pts0 + self.pts_delta * self.n_frames,
+                                    self.pts_delta)
         else:
             # The video is variable framerate
             self._framerate = 'variable'
             index['framerate'] = 'variable'
+            self.frames_pts = frames_pts
 
         index['n_frames'] = self.n_frames
         index['rotation'] = self.rotation
@@ -368,6 +371,9 @@ class VideoStreamer:
                 raise ValueError('pts_delta does not appear to be an integer. This is'
                                  ' unexpected and may indicate a malformed index.')
             self.pts_delta = self.pts_delta.numerator
+            self.frames_pts = range(self.pts0,
+                                    self.pts0 + self.pts_delta * self.n_frames,
+                                    self.pts_delta)
 
     @property
     def framerate(self) -> Union[float, Literal['variable']]:
