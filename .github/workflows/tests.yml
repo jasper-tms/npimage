@@ -30,4 +30,9 @@ jobs:
         run: pip install -e ".[all,dev]"
 
       - name: Run fast unit tests
-        run: pytest -m "not slow" --cov=npimage --cov-report=term-missing -v
+        run: pytest -m "not slow" --cov=npimage --cov-report=term-missing --cov-report=xml -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
