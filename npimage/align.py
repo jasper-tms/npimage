@@ -2,18 +2,15 @@
 """
 Functions for aligning images.
 """
-from typing import Optional, Tuple, Literal
+from typing import Optional, Tuple
 
 import numpy as np
-import cv2 as cv
 
 
 def find_landmark(image: np.ndarray,
                   landmark: np.ndarray,
                   search_bbox: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None,
-                  metric: Literal[cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED,
-                                  cv.TM_CCORR, cv.TM_CCORR_NORMED,
-                                  cv.TM_CCOEFF, cv.TM_CCOEFF_NORMED] = cv.TM_CCOEFF_NORMED,
+                  metric: Optional[int] = None,
                   subpixel_accuracy: bool = True
                   ) -> Tuple[Tuple[int, int], float]:
     """
@@ -45,7 +42,8 @@ def find_landmark(image: np.ndarray,
     metric : cv.TemplateMatchModes, optional
         The metric to use to compare the landmark to the image. Options are
         cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED, cv.TM_CCORR, cv.TM_CCORR_NORMED,
-        cv.TM_CCOEFF, cv.TM_CCOEFF_NORMED. Default is cv.TM_CCOEFF_NORMED.
+        cv.TM_CCOEFF, cv.TM_CCOEFF_NORMED.
+        If left as None, defaults to cv.TM_CCOEFF_NORMED.
 
     Returns
     -------
@@ -57,6 +55,17 @@ def find_landmark(image: np.ndarray,
             The score of the match, from 0 to 1. A score of 1 indicates
             a perfect match.
     """
+    try:
+        import cv2 as cv
+    except ImportError as e:
+        raise ImportError(
+            'find_landmark requires opencv. Install it with '
+            '`pip install numpyimage[align]` or `pip install opencv-python-headless`.'
+        ) from e
+
+    if metric is None:
+        metric = cv.TM_CCOEFF_NORMED
+
     if search_bbox is not None:
         if all(isinstance(el, slice) for el in search_bbox):
             img_to_search = image[search_bbox[0], search_bbox[1]]

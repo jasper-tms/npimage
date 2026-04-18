@@ -28,12 +28,18 @@ dependencies = [
     'tifffile',
     'pynrrd',
     'matplotlib',
-    'opencv-python-headless',
 ]
 
 [project.optional-dependencies]
+vid = [
+    'av',
+]
+align = [
+    'opencv-python-headless',
+]
 all = [
-    'av'
+    'av',
+    'opencv-python-headless',
 ]
 
 [tool.setuptools.packages.find]
