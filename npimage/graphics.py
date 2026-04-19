@@ -399,10 +399,14 @@ def imset(image, coords, value,
     Parameters
     ----------
     image : numpy.ndarray
-        The image to set pixel value(s) in.
+        The N-dimensional image to set pixel value(s) in.
 
     coords : numpy.ndarray or array-like
-        The coordinate locations to set values of.
+        The coordinate locations to set values of. Must be a 2D array
+        of shape (C, M) where C is however many coordinates you want to
+        set, and M must equal N (number of dimensions in `image`) if
+        `add_missing_dims` is None, or M can be less than N if
+        `add_missing_dims` is 'start' or 'end'.
 
     value : int, float, or array-like
         The value to set the pixel(s) at the given coordinates to.
@@ -443,20 +447,26 @@ def imset(image, coords, value,
         Refusing to wrap makes more sense in most graphics applications.
 
     add_missing_dims : {None, 'start', 'end'}, default None
-        If the `coords` argument has fewer dimensions than the `image`
-        argument, this parameter determines how to handle that mismatch.
-
+        If `coords` has fewer columns (M) than `image` has dimensions (N),
+        this parameter determines whether to add columns of slice(None) to
+        the 'start' or 'end' of the coordinate list (or to raise an error
+        when set to None).
         This is useful when you want to set all the rows, columns, or
-        channels of an image to a particular value. For example:
-        - You have a (360, 640, 3) RGB pixel array `image`
-        - You have 100 pixels specified in a (100, 2) array `coords`
-        - You want to make those pixels cyan, i.e. set the values along
-          the last axis to (0, 255, 255)
-        then since the color axis is the last axis, you can call:
-        >>> imset(image, coords, (0, 255, 255), add_missing_dims='end')
+        channels of an image to a particular value. See `Examples` below
+
+    Examples
+    --------
+    Using `add_missing_dims` to set RGB pixels in a color image. Let's say:
+    - You have a (360, 640, 3) RGB pixel array `image`
+    - You have 100 pixels specified in a (100, 2) array `coords`
+    - You want to make those pixels cyan, i.e. set the values along
+      the last axis to (0, 255, 255)
+    then since the color axis is the last axis, you can call:
+    >>> imset(image, coords, (0, 255, 255), add_missing_dims='end')
     """
     if not isinstance(coords, np.ndarray):
         coords = np.array(coords)
+    coords = coords[~np.isnan(coords).any(axis=1)]
 
     if out_of_bounds == 'wrap':
         allow_negative_wrapping = True
