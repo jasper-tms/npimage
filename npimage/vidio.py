@@ -384,9 +384,11 @@ class VideoStreamer:
     @property
     def fps(self) -> float:
         """
-        Note that fps always returns a float even if the framerate is 'variable'.
-        (If framerate is 'variable', fps returns exactly what its name, "frames per second",
-        implies: the number of frame intervals divided by the video duration in seconds.)
+        Frames per second, returned as a float even when the framerate is
+        'variable'. For variable-framerate videos this is the average rate,
+        equal to `n_frames / duration`, equivalently the number of frame
+        intervals divided by the time span between the first and last frames'
+        timestamps.
         """
         if self.framerate == 'variable':
             return float((self.n_frames - 1) / self.time_base
@@ -402,7 +404,21 @@ class VideoStreamer:
 
     @property
     def duration(self) -> float:
-        return float((self.frames_pts[-1] - self.frames_pts[0]) * self.time_base)
+        """
+        Total playback duration of the video in seconds, equal to
+        `n_frames / fps`.
+
+        Each frame is treated as occupying one inter-frame interval on
+        screen, so the duration extends from the first frame's timestamp to
+        one mean inter-frame interval past the last frame's timestamp. For
+        constant-framerate videos this is exactly `n_frames * timestep`.
+        For variable-framerate videos the last frame's display interval is
+        assumed to equal the mean inter-frame interval, which may differ
+        slightly from ffprobe's reported duration (ffprobe trusts the
+        encoder-written last-frame duration metadata, which is encoder-
+        dependent).
+        """
+        return float(self.n_frames / self.fps)
 
     def frame_number_to_pts(self, frame_number: int) -> int:
         if hasattr(frame_number, '__iter__'):
