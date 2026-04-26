@@ -11,7 +11,8 @@ Function list:
 
 Class list:
 - VideoStreamer: Provides fast random access to frames in a video file
-    via VideoStreamer[frame_number].
+    via VideoStreamer[frame_number], or by time in seconds via
+    VideoStreamer.t[time_in_seconds].
 - VideoWriter: Allows writing frames one-by-one to a video file via
     VideoWriter.write(image). This can be advantageous compared to save_video
     because you don't ever have to have all the frames in memory at once.
@@ -22,6 +23,8 @@ from pathlib import Path
 import subprocess
 import threading
 import json
+import math
+import bisect
 from fractions import Fraction
 
 import numpy as np
@@ -247,6 +250,7 @@ class VideoStreamer:
 
         self.index_filename = self.filename.with_suffix(self.filename.suffix + '.index')
         self._build_index(cache_index=cache_index)
+        self.t = _VideoStreamerTimeIndexer(self)
 
     def _build_index(self, cache_index='auto'):
         if cache_index and self.index_filename.exists():
@@ -632,6 +636,76 @@ class VideoStreamer:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+
+class _VideoStreamerTimeIndexer:
+    """
+    Helper exposing time-based indexing on a VideoStreamer via
+    ``streamer.t[time_in_seconds]``.
+
+    Returns a 3-tuple ``(image, timestamp, frame_index)`` for the frame
+    that is "on screen" at the requested time:
+      - ``image`` (np.ndarray): the frame's pixel data
+      - ``timestamp`` (float): the frame's actual timestamp in seconds
+      - ``frame_index`` (int): the frame's integer index in the video
+
+    Each frame N is treated as occupying the half-open interval
+    ``[frame_N_timestamp, frame_{N+1}_timestamp)``, and the last frame
+    occupies one mean inter-frame interval past its timestamp. The lookup
+    is therefore "largest frame timestamp less than or equal to the
+    requested time", with a half-tick eps tolerance so that a request for
+    the exact timestamp of frame N reliably returns frame N even when
+    floating-point arithmetic has nudged the value slightly below.
+
+    Valid times span ``[first_frame_timestamp, end_of_playback)``, where
+    ``end_of_playback = first_frame_timestamp + duration``.
+
+    Negative times wrap around relative to ``end_of_playback``, mirroring
+    how negative integer indices wrap on ``VideoStreamer``: a time of
+    ``-x`` resolves to ``end_of_playback - x``. Times more negative than
+    ``-duration`` raise ``IndexError``.
+    """
+    def __init__(self, streamer: 'VideoStreamer'):
+        self._streamer = streamer
+
+    def __getitem__(self, time) -> Tuple[np.ndarray, float, int]:
+        if not np.issubdtype(type(time), np.number):
+            raise TypeError(f'Time index must be a number, got {type(time).__name__}')
+        s = self._streamer
+        time = float(time)
+        first_frame_time = s.frame_number_to_time(0)
+        end_of_playback = first_frame_time + s.duration
+        if time < 0:
+            if time < -s.duration:
+                raise IndexError(f'Negative time {time:g} s is more than one'
+                                 f' video duration ({s.duration:g} s) before'
+                                 f' the end of the video.')
+            time = time + end_of_playback
+        if time >= end_of_playback:
+            raise IndexError(f'No frame at time {time:g} s (playback'
+                             f' ends at {end_of_playback:g} s).')
+        if time < first_frame_time:
+            raise IndexError(f'Time {time:g} s is before the first frame'
+                             f' (timestamp {first_frame_time:g} s).')
+        # Convert the requested time to a fractional PTS, then add half a
+        # time_base tick. The eps shift means a request for the exact
+        # timestamp of frame N returns frame N (rather than frame N-1) even
+        # if float arithmetic has nudged the converted value below the
+        # stored integer PTS.
+        target_pts = time / float(s.time_base) + 0.5
+        if s._framerate == 'variable':
+            # Largest index i with s.frames_pts[i] <= target_pts.
+            frame_number = bisect.bisect_right(s.frames_pts, target_pts) - 1
+        else:
+            offset = target_pts - s.pts0
+            frame_number = math.floor(offset / s.pts_delta)
+        # The bound checks above guarantee frame_number lands in
+        # [0, n_frames - 1] under exact arithmetic. Clamp defensively for
+        # the float-roundoff edge at exactly time == end_of_playback - eps.
+        frame_number = max(0, min(frame_number, s.n_frames - 1))
+        image = s._get_frame(frame_number)
+        timestamp = s.frame_number_to_time(frame_number)
+        return (image, timestamp, frame_number)
 
 
 class AVVideoWriter:
