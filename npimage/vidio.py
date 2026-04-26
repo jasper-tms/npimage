@@ -661,6 +661,9 @@ class AVVideoWriter:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
+        if not np.issubdtype(type(framerate), np.number):
+            raise TypeError('framerate must be a number but got'
+                            f' type {type(framerate)} instead')
         self._framerate = utils.limit_fraction(framerate)
         self.crf = crf
         self.compression_speed = compression_speed
@@ -776,6 +779,9 @@ class FFmpegVideoWriter:
             raise FileExistsError(f'File {filename} already exists. '
                                   'Set overwrite=True to overwrite.')
         self.filename = filename
+        if not np.issubdtype(type(framerate), np.number):
+            raise TypeError('framerate must be a number but got'
+                            f' type {type(framerate)} instead')
         self._framerate = utils.limit_fraction(framerate)
         self.crf = crf
         self.compression_speed = compression_speed
