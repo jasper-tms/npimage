@@ -925,6 +925,8 @@ class FFmpegVideoWriter:
         # Initialize process state
         self._process = None
         self._stdin = None
+        self._stderr_thread = None
+        self._stderr_buffer = b''
         self._closed = False
         self._width = None
         self._height = None
@@ -994,6 +996,15 @@ class FFmpegVideoWriter:
         )
         self._stdin = self._process.stdin
 
+        # Drain ffmpeg's stderr in a background thread so a verbose or
+        # erroring ffmpeg can't fill the pipe buffer (~64 KB on Linux, smaller
+        # on Windows) and deadlock our writes to stdin.
+        def _drain_stderr():
+            self._stderr_buffer = self._process.stderr.read()
+        self._stderr_thread = threading.Thread(target=_drain_stderr,
+                                               daemon=True)
+        self._stderr_thread.start()
+
     def write(self, frame):
         """Write a frame to the video file"""
         if self._closed:
@@ -1054,8 +1065,10 @@ class FFmpegVideoWriter:
 
             # Wait for FFmpeg to finish
             if self._process:
-                stderr_data = self._process.stderr.read()
                 return_code = self._process.wait()
+                if self._stderr_thread is not None:
+                    self._stderr_thread.join()
+                stderr_data = self._stderr_buffer
 
                 # Check for errors
                 if return_code != 0:
@@ -1065,6 +1078,7 @@ class FFmpegVideoWriter:
             # Clean up process references
             self._process = None
             self._stdin = None
+            self._stderr_thread = None
             self._closed = True
 
     def __enter__(self):
