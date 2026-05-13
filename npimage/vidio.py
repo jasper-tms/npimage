@@ -21,6 +21,8 @@ Class list:
 from typing import Union, Tuple, Iterator, Literal
 from pathlib import Path
 import subprocess
+import shutil
+import sys
 import threading
 import json
 import math
@@ -68,6 +70,43 @@ def _import_av():
     except ImportError:
         raise ImportError('Missing optional dependency for video processing,'
                           ' run `pip install av` and try again')
+
+
+def _check_ffmpeg_available(program: Literal['ffmpeg', 'ffprobe'] = 'ffmpeg'):
+    """
+    Check that ffmpeg or ffprobe is on PATH, and raise a
+    FileNotFoundError with installation instructions if not.
+    """
+    if shutil.which(program) is not None:
+        return
+    if sys.platform.startswith('linux'):
+        install_hint = (
+            'On Debian/Ubuntu:  sudo apt install ffmpeg\n'
+            '  On Fedora/RHEL:    sudo dnf install ffmpeg\n'
+            '  On Arch:           sudo pacman -S ffmpeg'
+        )
+    elif sys.platform == 'darwin':
+        install_hint = (
+            'With Homebrew:     brew install ffmpeg\n'
+            '  With MacPorts:     sudo port install ffmpeg'
+        )
+    elif sys.platform.startswith('win'):
+        install_hint = (
+            'With winget:       winget install ffmpeg\n'
+            '  With Chocolatey:   choco install ffmpeg\n'
+            '  Or download a static build from https://ffmpeg.org/download.html'
+            ' and add it to your PATH.'
+        )
+    else:
+        install_hint = (
+            'See https://ffmpeg.org/download.html for installation'
+            ' instructions for your platform.'
+        )
+    raise FileNotFoundError(
+        f"`{program}` was not found on PATH. npimage.vidio needs the ffmpeg"
+        f" suite installed to read and write video files.\n\n"
+        f"Install ffmpeg:\n  {install_hint}"
+    )
 
 
 def load_video(filename,
@@ -285,6 +324,7 @@ class VideoStreamer:
                 print('Falling back to ffprobe...')
             frames_pts = []
             # Fallback to ffprobe if PyAV didn't work
+            _check_ffmpeg_available('ffprobe')
             cmd = ['ffprobe',
                    '-select_streams', 'v:0',
                    '-show_frames',
@@ -945,6 +985,7 @@ class FFmpegVideoWriter:
         command.append(str(self.filename))
 
         # Start FFmpeg process
+        _check_ffmpeg_available('ffmpeg')
         self._process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -1176,6 +1217,8 @@ def _get_rotation_from_metadata(filename):
     We could use PyAV to do this perhaps faster, but for an already fast operation
     like this, we stick with ffprobe to avoid the memory leaks in PyAV.
     """
+    if shutil.which('ffprobe') is None:
+        return None
     cmd = ['ffprobe',
            '-v', 'quiet',
            '-select_streams', 'v:0',
