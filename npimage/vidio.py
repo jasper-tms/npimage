@@ -1116,7 +1116,8 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
     color_axis : int or None, default None
         If not None, specifies the axis of the color channels (e.g., -1 for last axis,
         1 for second axis).
-        If None, data must be 3D (greyscale) or 4D with one length 3 axis (RGB).
+        If None, data must be 3D (greyscale) or 4D with one length 3 axis (RGB)
+        or length 4 axis (RGBA, whose alpha channel will be dropped).
 
     overwrite : bool, default False
         Whether to overwrite the file if it already exists.
@@ -1158,9 +1159,10 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
     if not isinstance(data, np.ndarray):
         data = np.array(data)
     if color_axis is None and data.ndim == 4:
-        color_axis = utils.find_channel_axis(data, possible_channel_lengths=3)
+        color_axis = utils.find_channel_axis(data, possible_channel_lengths=[3, 4])
         if color_axis is None:
-            raise ValueError('4D input data must have an RGB (length 3) axis.')
+            raise ValueError('4D input data must have an RGB (length 3) or '
+                             'RGBA (length 4) axis.')
     if color_axis is not None:
         if data.ndim != 4:
             raise ValueError('Input data must be 4D when color_axis is specified.')
@@ -1172,6 +1174,11 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
             data = data.swapaxes(1, 2)
         n_frames = data.shape[0]
         height, width, channels = data.shape[1:]
+        if channels == 4:
+            # While some video codecs support an alpha channel, most don't,
+            # so we drop it and keep just the RGB channels
+            data = data[..., :3]
+            channels = 3
         if channels != 3:
             raise ValueError(f'Color video must have 3 channels (RGB) but had {channels}.')
     else:
