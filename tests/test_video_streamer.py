@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import npimage
+from npimage.vidio import _parse_cache_size
 
 TESTS_DIR = Path(__file__).parent
 SPINNING_MP4 = TESTS_DIR / 'table-tennis-emoji-spinning.mp4'
@@ -320,3 +321,187 @@ def test_t_indexer_variable_framerate_uses_bisect(spinning_streamer):
     finally:
         vid._framerate = original_framerate
         vid.frames_pts = original_frames_pts
+
+
+# ----------------------------------------------------------------------------
+# Frame caching
+# ----------------------------------------------------------------------------
+
+def test_parse_cache_size_disabled():
+    """None and 0 (in either int or string form) disable caching."""
+    assert _parse_cache_size(None) == (None, None)
+    assert _parse_cache_size(0) == (None, None)
+    assert _parse_cache_size('0') == (None, None)
+    assert _parse_cache_size('0MB') == (None, None)
+
+
+def test_parse_cache_size_frame_counts():
+    """Bare ints and bare numeric strings are interpreted as frame counts."""
+    assert _parse_cache_size(64) == (64, None)
+    assert _parse_cache_size('64') == (64, None)
+
+
+def test_parse_cache_size_byte_budgets():
+    """Strings with units are interpreted as memory budgets (powers of 1024)."""
+    assert _parse_cache_size('1B') == (None, 1)
+    assert _parse_cache_size('1KB') == (None, 1024)
+    assert _parse_cache_size('256MB') == (None, 256 * 1024 ** 2)
+    assert _parse_cache_size('1.5GB') == (None, int(1.5 * 1024 ** 3))
+    # Binary-prefix spellings are accepted as aliases.
+    assert _parse_cache_size('1MiB') == (None, 1024 ** 2)
+    # Whitespace and case are tolerated.
+    assert _parse_cache_size('  2 gb ') == (None, 2 * 1024 ** 3)
+
+
+def test_parse_cache_size_invalid():
+    """Bad units, non-whole frame counts, bools, and negatives all raise."""
+    with pytest.raises(ValueError):
+        _parse_cache_size('abc')
+    with pytest.raises(ValueError):
+        _parse_cache_size('10TB')
+    with pytest.raises(ValueError):
+        _parse_cache_size('1.5')  # fractional frame count
+    with pytest.raises(ValueError):
+        _parse_cache_size(-5)
+    with pytest.raises(TypeError):
+        _parse_cache_size(True)
+
+
+def test_cache_returns_correct_frames():
+    """Cached frames are pixel-identical to uncached ones, even out of order."""
+    reference = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=None)
+    cached = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=4)
+    try:
+        for i in [0, 5, 2, 5, 0, 7, 3, 7, 1]:
+            assert np.array_equal(reference[i], cached[i]), f'mismatch at frame {i}'
+    finally:
+        reference.close()
+        cached.close()
+
+
+def test_cache_disabled_returns_writeable_frames():
+    """With caching off, returned frames are writeable (unchanged behavior)."""
+    vid = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=None)
+    try:
+        assert vid._cache is None
+        assert vid[0].flags.writeable
+    finally:
+        vid.close()
+
+
+def test_cache_enabled_returns_writeable_independent_frames():
+    """
+    With caching on, returned frames are still writeable, and mutating a
+    returned frame must not corrupt the cached copy handed to later callers.
+
+    This exercises both the cache-miss return path (the first read of a frame)
+    and the cache-hit return path (subsequent reads): mutating the frame
+    returned from either must leave the cache untouched.
+    """
+    vid = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=4)
+    try:
+        first = vid[0]                  # cache miss: this return is freshly decoded
+        assert first.flags.writeable
+        original = first.copy()
+        # Guard against a vacuous test: the frame must have content to clobber.
+        assert original.any()
+
+        first[:] = 0                    # mutate the miss-path frame in place
+        second = vid[0]                 # cache hit: must be the pristine frame
+        assert np.array_equal(second, original), (
+            'Mutating the frame returned on a cache miss corrupted the cache.'
+        )
+
+        second[:] = 0                   # now mutate the hit-path frame in place
+        third = vid[0]                  # another cache hit: still pristine
+        assert np.array_equal(third, original), (
+            'Mutating the frame returned on a cache hit corrupted the cache.'
+        )
+
+        # Every read handed back an independent array object.
+        assert first is not second
+        assert second is not third
+        assert first is not third
+    finally:
+        vid.close()
+
+
+def test_cache_lru_eviction_by_frame_count():
+    """The least recently used frames are evicted once the cache is full."""
+    vid = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=4)
+    try:
+        for i in range(5):  # fill past capacity: 0 should be evicted
+            _ = vid[i]
+        assert list(vid._cache.keys()) == [1, 2, 3, 4]
+        # Touch frame 1 (most recently used), then add two more.
+        _ = vid[1]
+        _ = vid[5]
+        _ = vid[6]
+        # 2 and 3 (oldest untouched) evicted; 1 retained because it was reused.
+        assert 1 in vid._cache
+        assert 2 not in vid._cache
+        assert 3 not in vid._cache
+    finally:
+        vid.close()
+
+
+def test_cache_respects_byte_budget():
+    """A memory-budgeted cache never holds more bytes than allowed."""
+    reference = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=None)
+    frame_bytes = reference[0].nbytes
+    # Budget for exactly two frames.
+    vid = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=f'{2 * frame_bytes}B')
+    try:
+        for i in range(5):
+            _ = vid[i]
+        assert len(vid._cache) == 2
+        assert vid._cache_bytes <= 2 * frame_bytes
+    finally:
+        reference.close()
+        vid.close()
+
+
+def test_clear_cache():
+    """clear_cache empties the cache and resets the byte tally."""
+    vid = npimage.VideoStreamer(str(SPINNING_MP4), cache_size='64MB')
+    try:
+        for i in range(4):
+            _ = vid[i]
+        assert len(vid._cache) > 0
+        vid.clear_cache()
+        assert len(vid._cache) == 0
+        assert vid._cache_bytes == 0
+        # The streamer still works after clearing.
+        assert np.array_equal(vid[0], vid[0])
+    finally:
+        vid.close()
+
+
+def test_cache_hit_serves_without_redecoding():
+    """
+    The core promise of the cache: re-reading a cached frame returns it
+    straight from memory without decoding it again.
+
+    We verify this without mocking by watching `_current_frame_number`, which
+    tracks the decoder's position. Decoding a frame advances it to that frame,
+    whereas a cache hit returns before touching the stream and so leaves it
+    unchanged. We also confirm the cached frame is still pixel-correct.
+    """
+    reference = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=None)
+    vid = npimage.VideoStreamer(str(SPINNING_MP4), cache_size=8)
+    try:
+        _ = vid[5]                              # cache miss: decodes frame 5
+        _ = vid[2]                              # cache miss: decodes frame 2
+        assert vid._current_frame_number == 2   # decoder is now parked at 2
+
+        frame5 = vid[5]                          # cache hit: must NOT decode
+        assert vid._current_frame_number == 2, (
+            'Re-reading a cached frame moved the decoder, so it was decoded '
+            'again instead of served from the cache.'
+        )
+        assert 5 in vid._cache
+        # The frame served from the cache is identical to a fresh decode.
+        assert np.array_equal(frame5, reference[5])
+    finally:
+        reference.close()
+        vid.close()
