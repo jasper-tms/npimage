@@ -52,13 +52,17 @@ def load(filename, dim_order='zyx', **kwargs) -> Union[np.ndarray, Tuple[np.ndar
     metadata = None
 
     if extension in ['jpg', 'jpeg', 'png']:
-        from PIL import Image
-        data = np.array(Image.open(filename))  # PIL.Image.open returns zyx order
+        from PIL import Image, ImageOps
+        # PIL.Image.open returns the raw stored pixels and does not apply the
+        # EXIF Orientation tag, so photos taken in a rotated orientation would
+        # load sideways or upside-down. ImageOps.exif_transpose applies the tag
+        # (and is a no-op when no Orientation tag is present).
+        data = np.array(ImageOps.exif_transpose(Image.open(filename)))
 
     if extension == 'heic':
         _ensure_heif_opener_registered()
-        from PIL import Image
-        data = np.array(Image.open(filename))  # PIL.Image.open returns zyx order
+        from PIL import Image, ImageOps
+        data = np.array(ImageOps.exif_transpose(Image.open(filename)))
 
     if extension in ['tif', 'tiff']:
         import tifffile
