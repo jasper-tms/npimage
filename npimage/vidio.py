@@ -13,6 +13,9 @@ Class list:
 - VideoStreamer: Provides fast random access to frames in a video file
     via VideoStreamer[frame_number], or by time in seconds via
     VideoStreamer.t[time_in_seconds].
+- ConstantFrameratePTS: The frame timestamps of a constant-framerate video,
+    stored as a formula instead of as one timestamp per frame. This is what
+    VideoStreamer.frames_pts holds for a constant-framerate video.
 - VideoWriter: Allows writing frames one-by-one to a video file via
     VideoWriter.write(image). This can be advantageous compared to save_video
     because you don't ever have to have all the frames in memory at once.
@@ -26,7 +29,6 @@ import shutil
 import sys
 import threading
 import json
-import math
 import re
 import bisect
 from fractions import Fraction
@@ -252,6 +254,340 @@ _cache_size_units = {
     'gb': 1024 ** 3,
 }
 
+# Bumped whenever the on-disk .index format changes in a way that makes
+# previously written index files unusable or obsolete. Index files without
+# this key, or with an older value, are discarded and rebuilt.
+_index_format_version = 2
+
+# Framerates that real videos are actually shot at, including the awkward
+# 1000/1001 ("NTSC") rates. A short clip's timestamps often can't distinguish
+# the true framerate from some nearby fraction that happens to reproduce them
+# just as exactly, so when we have to work the framerate out from the
+# timestamps we check these first and report one of them if it fits. That way
+# a 29.97 fps video is reported as 30000/1001 rather than as whatever odd
+# fraction happens to land on the same timestamps.
+_common_framerates = (
+    Fraction(24000, 1001), Fraction(24), Fraction(25),
+    Fraction(30000, 1001), Fraction(30), Fraction(48), Fraction(50),
+    Fraction(60000, 1001), Fraction(60), Fraction(100),
+    Fraction(120000, 1001), Fraction(120), Fraction(240),
+)
+
+
+def _round_half_away_from_zero(value: Fraction) -> int:
+    """
+    Round a `Fraction` to the nearest integer, breaking ties away from zero.
+
+    ffmpeg rounds this way (its `AV_ROUND_NEAR_INF` mode) when it converts a
+    frame's ideal presentation time into an integer timestamp in the
+    container's time base, so this is the convention that must be used to
+    reproduce the timestamps ffmpeg wrote. Python's built-in `round()` breaks
+    ties toward the nearest even integer instead, which disagrees whenever a
+    frame's ideal time lands exactly halfway between two ticks: a 16 fps webm
+    stores its second frame at tick 63, whereas `round(Fraction(125, 2))`
+    gives 62.
+
+    Parameters
+    ----------
+    value : Fraction
+        The value to round.
+
+    Returns
+    -------
+    int
+        `value` rounded to the nearest integer, with exact halves rounded
+        away from zero.
+    """
+    numerator, denominator = value.numerator, value.denominator
+    if numerator >= 0:
+        return (2 * numerator + denominator) // (2 * denominator)
+    return -((-2 * numerator + denominator) // (2 * denominator))
+
+
+class ConstantFrameratePTS:
+    """
+    The presentation timestamps (PTS) of a constant-framerate video, stored
+    as a formula rather than as an explicit list of values.
+
+    Frame `i` of a constant-framerate video is shown `i / framerate` seconds
+    after the first frame, but a container can only store a timestamp as a
+    whole number of ticks of its `time_base`, so the PTS actually written to
+    the file is that ideal time rounded to the nearest tick:
+
+        pts[i] = pts0 + round(i / framerate / time_base)
+
+    When one frame spans a whole number of ticks the rounding does nothing and
+    consecutive PTS values come out evenly spaced. This is the case for a
+    typical mp4, whose `time_base` is chosen to divide evenly by the framerate
+    (at 30 fps with a time_base of 1/15360, every frame is exactly 512 ticks).
+
+    When one frame does not span a whole number of ticks, the rounding makes
+    consecutive PTS values differ by a tick here and there even though the
+    video is perfectly constant-framerate. This is unavoidable for webm and
+    other Matroska files, whose `time_base` is 1/1000: at 30 fps a frame lasts
+    100/3 ticks, so the stored timestamps go 0, 33, 67, 100, 133, ... and the
+    gaps between them alternate between 33 and 34. Such a video is still
+    constant-framerate in every sense that matters here, because the timestamps
+    are still fully described by the formula above.
+
+    This class represents both cases exactly. It behaves like an immutable
+    sequence of the video's PTS values, so it can be indexed, sliced,
+    iterated, and searched just like the plain list of PTS values that
+    `VideoStreamer` uses for a variable-framerate video. Unlike that list it
+    stores only four numbers no matter how long the video is, and it can
+    convert a PTS back to a frame number by arithmetic instead of by scanning.
+    """
+    def __init__(self,
+                 pts0: int,
+                 framerate: Union[int, Fraction],
+                 time_base: Fraction,
+                 n_frames: int):
+        """
+        Parameters
+        ----------
+        pts0 : int
+            The PTS of the first frame.
+
+        framerate : int or Fraction
+            Frames per second.
+
+        time_base : Fraction
+            The duration of one PTS tick, in seconds.
+
+        n_frames : int
+            The number of frames in the video.
+        """
+        self.pts0 = int(pts0)
+        self.framerate = Fraction(framerate)
+        self.time_base = Fraction(time_base)
+        self.n_frames = int(n_frames)
+        if self.framerate <= 0:
+            raise ValueError(f'framerate must be positive, got {framerate}')
+        if self.n_frames < 0:
+            raise ValueError(f'n_frames must not be negative, got {n_frames}')
+        # The number of ticks one frame lasts. Not necessarily a whole number,
+        # which is the entire reason this class exists.
+        self.ticks_per_frame = 1 / (self.framerate * self.time_base)
+
+    def _pts_at(self, frame_number: int) -> int:
+        """
+        Evaluate the PTS formula at a single frame number, which must already
+        be normalized to lie in `range(self.n_frames)`.
+        """
+        return self.pts0 + _round_half_away_from_zero(frame_number
+                                                      * self.ticks_per_frame)
+
+    def as_array(self) -> np.ndarray:
+        """
+        Evaluate the PTS formula at every frame number at once.
+
+        Returns
+        -------
+        np.ndarray
+            The video's PTS values, as an array of `self.n_frames` integers.
+        """
+        numerator = self.ticks_per_frame.numerator
+        denominator = self.ticks_per_frame.denominator
+        # The vectorized form of _round_half_away_from_zero(i * ticks_per_frame),
+        # relying on i, numerator, and denominator all being positive. numpy
+        # integers wrap around silently on overflow instead of raising, so fall
+        # back to (slower) arbitrary-precision python ints if int64 can't hold
+        # the largest intermediate value this would compute.
+        largest_intermediate = 2 * max(self.n_frames - 1, 0) * numerator + denominator
+        if largest_intermediate > np.iinfo(np.int64).max:
+            return np.array([self._pts_at(i) for i in range(self.n_frames)],
+                            dtype=object)
+        frame_numbers = np.arange(self.n_frames, dtype=np.int64)
+        return self.pts0 + ((2 * frame_numbers * numerator + denominator)
+                            // (2 * denominator))
+
+    def reproduces(self, frames_pts: Union[list, np.ndarray]) -> bool:
+        """
+        Check whether this formula reproduces a list of PTS values exactly.
+
+        This is the test that decides whether a video counts as constant
+        framerate. It is an exact test, not an approximate one: every single
+        timestamp must come out bit-for-bit identical, and the timestamps must
+        be strictly increasing (so that each PTS maps back to exactly one
+        frame number).
+
+        Parameters
+        ----------
+        frames_pts : list or np.ndarray
+            The PTS values read out of the video file, in presentation order.
+
+        Returns
+        -------
+        bool
+            True if `pts[i] == pts0 + round(i / framerate / time_base)` holds
+            for every frame, and the values strictly increase.
+        """
+        if len(frames_pts) != self.n_frames:
+            return False
+        reconstructed = self.as_array()
+        if not np.array_equal(reconstructed, np.asarray(frames_pts)):
+            return False
+        return bool(self.n_frames < 2 or (np.diff(reconstructed) > 0).all())
+
+    def __len__(self) -> int:
+        return self.n_frames
+
+    def __getitem__(self, key) -> Union[int, list]:
+        if isinstance(key, slice):
+            return [self._pts_at(i) for i in range(*key.indices(self.n_frames))]
+        if not np.issubdtype(type(key), np.integer):
+            raise TypeError(f'Frame number must be an int or slice, got '
+                            f'{type(key).__name__}')
+        frame_number = int(key)
+        if frame_number < 0:
+            frame_number += self.n_frames
+        if not 0 <= frame_number < self.n_frames:
+            raise IndexError(f'Frame number {key} is out of range for a video '
+                             f'with {self.n_frames} frames.')
+        return self._pts_at(frame_number)
+
+    def __iter__(self) -> Iterator[int]:
+        return (self._pts_at(i) for i in range(self.n_frames))
+
+    def index(self, pts: int) -> int:
+        """
+        Find the frame number whose PTS is `pts`, in constant time.
+
+        Inverting the PTS formula gives a frame number that is off by at most
+        one from the true one (the rounding in the formula moves a timestamp by
+        less than a tick, and a frame lasts at least a tick in any video whose
+        timestamps strictly increase), so it is enough to check the estimate
+        and its two neighbors.
+
+        Parameters
+        ----------
+        pts : int
+            The PTS to look up.
+
+        Returns
+        -------
+        int
+            The frame number with this PTS.
+
+        Raises
+        ------
+        ValueError
+            If no frame has this PTS.
+        """
+        pts = int(pts)
+        estimate = int((pts - self.pts0) / self.ticks_per_frame)
+        for frame_number in (estimate - 1, estimate, estimate + 1):
+            if 0 <= frame_number < self.n_frames and self._pts_at(frame_number) == pts:
+                return frame_number
+        raise ValueError(f'PTS {pts} is not in this video.')
+
+    def __contains__(self, pts) -> bool:
+        try:
+            self.index(pts)
+        except (ValueError, TypeError):
+            return False
+        return True
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, ConstantFrameratePTS):
+            return (self.pts0 == other.pts0
+                    and self.framerate == other.framerate
+                    and self.time_base == other.time_base
+                    and self.n_frames == other.n_frames)
+        if isinstance(other, (list, tuple)):
+            return list(self) == list(other)
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        return (f'{type(self).__name__}(pts0={self.pts0}, '
+                f'framerate={self.framerate}, time_base={self.time_base}, '
+                f'n_frames={self.n_frames})')
+
+
+def _detect_constant_framerate(frames_pts: list,
+                               time_base: Fraction,
+                               declared_framerate=None
+                               ) -> Optional[ConstantFrameratePTS]:
+    """
+    Determine whether a video's PTS values are exactly described by a constant
+    framerate, and if so, by which one.
+
+    A video counts as constant framerate when some framerate `r` satisfies
+    `pts[i] == pts0 + round(i / r / time_base)` for every frame (see
+    `ConstantFrameratePTS`). Rather than solving for `r`, this tries a short
+    list of plausible candidates and verifies each one against every timestamp
+    in the video, so a candidate is only ever accepted on the strength of
+    exactly reproducing the data. A framerate the container declares but does
+    not honor is therefore rejected, as is a framerate derived here that turns
+    out not to fit.
+
+    Parameters
+    ----------
+    frames_pts : list of int
+        The video's PTS values, in presentation order.
+
+    time_base : Fraction
+        The duration of one PTS tick, in seconds.
+
+    declared_framerate : int, Fraction, or None, default None
+        The framerate the container claims, if it claims one. Used only as a
+        candidate to be verified, never trusted on its own.
+
+    Returns
+    -------
+    ConstantFrameratePTS or None
+        A formula that exactly reproduces `frames_pts`, or None if the video
+        is genuinely variable framerate.
+    """
+    n_frames = len(frames_pts)
+    if n_frames == 0:
+        return None
+    if n_frames == 1:
+        # A single frame is trivially consistent with any framerate. Pick the
+        # declared one if there is one so that `framerate` is still reported.
+        framerate = Fraction(declared_framerate) if declared_framerate else Fraction(1)
+        return ConstantFrameratePTS(frames_pts[0], framerate, time_base, 1)
+
+    candidates = []
+    if declared_framerate:
+        candidates.append(Fraction(declared_framerate))
+
+    # The framerate implied by the gap between the first two frames. This is
+    # the exact answer whenever a frame spans a whole number of ticks, which
+    # covers the evenly-spaced case that mp4 files fall into.
+    first_gap = frames_pts[1] - frames_pts[0]
+    if first_gap > 0:
+        candidates.append(1 / (first_gap * time_base))
+
+    # The average framerate across the whole video, which for a constant
+    # framerate video lands within a rounding error of the true rate. Snapping
+    # it to a nearby standard framerate, and failing that to a nearby simple
+    # fraction, recovers the true rate. Standard framerates are tried first
+    # because a short video's timestamps can be reproduced exactly by more than
+    # one framerate, and in that case the standard one is the right answer to
+    # report.
+    span = frames_pts[-1] - frames_pts[0]
+    if span > 0:
+        average = Fraction(n_frames - 1) / (span * time_base)
+        nearby = sorted((framerate for framerate in _common_framerates
+                         if abs(framerate - average) < average / 1000),
+                        key=lambda framerate: abs(framerate - average))
+        candidates.extend(nearby)
+        for largest_denominator in (1, 1001, 100000):
+            candidates.append(average.limit_denominator(largest_denominator))
+
+    checked = set()
+    for framerate in candidates:
+        framerate = Fraction(framerate)
+        if framerate <= 0 or framerate in checked:
+            continue
+        checked.add(framerate)
+        candidate = ConstantFrameratePTS(frames_pts[0], framerate,
+                                         time_base, n_frames)
+        if candidate.reproduces(frames_pts):
+            return candidate
+    return None
+
 
 def _parse_cache_size(cache_size: Optional[Union[int, str]]
                       ) -> Tuple[Optional[int], Optional[int]]:
@@ -318,6 +654,8 @@ class VideoStreamer:
             next to the video file for faster loading next time.
             If 'auto', the index is cached only if building it takes
             more than 0.5 seconds, which only happens for ~1+ GB videos.
+            An index file written by an older version of npimage is
+            discarded and rebuilt.
 
         cache_size : int, str, or None, default '256MB'
             Sets the size of an in-memory cache of decoded frames. The cache
@@ -382,8 +720,8 @@ class VideoStreamer:
         self.t = _VideoStreamerTimeIndexer(self)
 
     def _build_index(self, cache_index='auto'):
-        if cache_index and self.index_filename.exists():
-            return self._load_index()
+        if cache_index and self.index_filename.exists() and self._load_index():
+            return
         if self.verbose:
             print('Building frame timestamp index for fast random frame access...')
 
@@ -438,37 +776,38 @@ class VideoStreamer:
         self.n_frames = len(frames_pts)
         self.pts0 = frames_pts[0]
         self.rotation = _get_rotation_from_metadata(self.filename)
-        index = {}
+        index = {'index_format_version': _index_format_version}
 
-        # Determine whether the video is constant or variable framerate
-        pts_deltas = np.diff(frames_pts) if len(frames_pts) > 1 else None
-        if pts_deltas is not None and (pts_deltas == pts_deltas[0]).all():
+        # Determine whether the video is constant or variable framerate. The
+        # video counts as constant framerate if some single framerate exactly
+        # reproduces every one of its timestamps, which is a weaker condition
+        # than the timestamps being evenly spaced (see ConstantFrameratePTS)
+        # but still an exact one.
+        declared_framerate = getattr(self.stream, 'average_rate', None)
+        constant_framerate_pts = _detect_constant_framerate(
+            frames_pts, self.time_base, declared_framerate)
+        if constant_framerate_pts is not None:
             # The video is constant framerate
-            self.pts_delta = int(pts_deltas[0])
-            self._framerate = 1 / (self.pts_delta * self.time_base)
+            self.frames_pts = constant_framerate_pts
+            self._framerate = constant_framerate_pts.framerate
             if self._framerate.denominator == 1:
                 self._framerate = self._framerate.numerator
                 index['framerate'] = self._framerate
             else:
                 index['framerate'] = {'numerator': self._framerate.numerator,
                                       'denominator': self._framerate.denominator}
-            self.frames_pts = range(self.pts0,
-                                    self.pts0 + self.pts_delta * self.n_frames,
-                                    self.pts_delta)
+            index['pts0'] = self.pts0
         else:
             # The video is variable framerate
             self._framerate = 'variable'
             index['framerate'] = 'variable'
             self.frames_pts = frames_pts
+            index['frames_pts'] = frames_pts
 
         index['n_frames'] = self.n_frames
         index['rotation'] = self.rotation
         index['time_base'] = {'numerator': self.time_base.numerator,
                               'denominator': self.time_base.denominator}
-        if self._framerate == 'variable':
-            index['frames_pts'] = frames_pts
-        else:
-            index['pts0'] = self.pts0
 
         if cache_index is True or (cache_index == 'auto'
                                    and time.time() - start_time > 0.5):
@@ -477,37 +816,111 @@ class VideoStreamer:
             if self.verbose:
                 print(f'Cached index at "{self.index_filename}"')
 
-    def _load_index(self):
+    def _load_index(self) -> bool:
+        """
+        Load a previously cached frame timestamp index.
+
+        Returns
+        -------
+        bool
+            True if the index was loaded. False if it was written by an older
+            version of npimage or is unreadable, in which case the caller
+            should rebuild it from the video file.
+        """
         if self.verbose:
             print(f'Loading frame timestamp index from "{self.index_filename}"')
 
-        with open(self.index_filename, 'r') as f:
-            index = json.load(f)
-        self.n_frames = index['n_frames']
-        self.rotation = index.get('rotation', None)
+        try:
+            with open(self.index_filename, 'r') as f:
+                index = json.load(f)
+            if index.get('index_format_version') != _index_format_version:
+                if self.verbose:
+                    print(f'Index at "{self.index_filename}" was written in an'
+                          ' outdated format. Rebuilding it.')
+                return False
+            self.n_frames = index['n_frames']
+            self.rotation = index.get('rotation', None)
+            time_base = index['time_base']
+            self.time_base = Fraction(time_base['numerator'],
+                                      time_base['denominator'])
 
-        # Load time_base and pts_values
-        time_base_data = index['time_base']
-        self.time_base = Fraction(time_base_data['numerator'], time_base_data['denominator'])
-
-        if index['framerate'] == 'variable':
-            self._framerate = 'variable'
-            self.frames_pts = index['frames_pts']
-        else:
-            self.pts0 = index['pts0']
-            if np.issubdtype(type(index['framerate']), np.integer):
-                self._framerate = index['framerate']
+            if index['framerate'] == 'variable':
+                self._framerate = 'variable'
+                self.frames_pts = index['frames_pts']
+                self.pts0 = self.frames_pts[0]
             else:
-                self._framerate = Fraction(index['framerate']['numerator'],
-                                           index['framerate']['denominator'])
-            self.pts_delta = 1 / self.time_base / self._framerate
-            if self.pts_delta.denominator != 1:
-                raise ValueError('pts_delta does not appear to be an integer. This is'
-                                 ' unexpected and may indicate a malformed index.')
-            self.pts_delta = self.pts_delta.numerator
-            self.frames_pts = range(self.pts0,
-                                    self.pts0 + self.pts_delta * self.n_frames,
-                                    self.pts_delta)
+                self.pts0 = index['pts0']
+                if isinstance(index['framerate'], dict):
+                    self._framerate = Fraction(index['framerate']['numerator'],
+                                               index['framerate']['denominator'])
+                else:
+                    self._framerate = index['framerate']
+                self.frames_pts = ConstantFrameratePTS(self.pts0, self._framerate,
+                                                       self.time_base, self.n_frames)
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
+            if self.verbose:
+                print(f'Could not read index at "{self.index_filename}" ({e}).'
+                      ' Rebuilding it.')
+            return False
+        return True
+
+    @property
+    def ticks_per_frame(self) -> Fraction:
+        """
+        How long one frame lasts, in PTS ticks, as an exact `Fraction`.
+
+        This is not necessarily a whole number: a 30 fps webm has a time_base
+        of 1/1000, so each of its frames lasts 100/3 ticks. The PTS actually
+        stored for a frame is this ideal spacing rounded to a whole number of
+        ticks, so use `frame_number_to_pts()` to get a frame's real PTS rather
+        than multiplying by this.
+
+        Raises
+        ------
+        AttributeError
+            If the video is variable framerate, in which case its frames have
+            no single duration.
+        """
+        if self._framerate == 'variable':
+            raise AttributeError('A variable-framerate video has no single '
+                                 'ticks_per_frame. Use frame_number_to_pts() '
+                                 'instead.')
+        return self.frames_pts.ticks_per_frame
+
+    @property
+    def pts_delta(self) -> int:
+        """
+        The whole number of PTS ticks between consecutive frames.
+
+        This only exists for a video whose frames each last a whole number of
+        ticks, which is the case when the container's time_base divides evenly
+        by the framerate (as a typical mp4's does). Such a video's PTS values
+        are evenly spaced, so `pts0 + frame_number * pts_delta` is a valid way
+        to compute them.
+
+        It deliberately does not exist for a video whose frames do not last a
+        whole number of ticks, such as any 30 fps webm (whose time_base is
+        1/1000, giving 100/3 ticks per frame). Such a video's PTS values are
+        not evenly spaced, so there is no correct integer to return here, and
+        computing timestamps by repeatedly adding one would drift away from the
+        real timestamps. Use `frame_number_to_pts()`, which is exact for every
+        video, or `ticks_per_frame` for the exact fractional frame duration.
+
+        Raises
+        ------
+        AttributeError
+            If the video is variable framerate, or if its frames do not last a
+            whole number of ticks.
+        """
+        ticks_per_frame = self.ticks_per_frame
+        if ticks_per_frame.denominator != 1:
+            raise AttributeError(
+                f'The frames of this video each last {ticks_per_frame} PTS '
+                f'ticks, which is not a whole number, so its PTS values are '
+                f'not evenly spaced and it has no integer pts_delta. Use '
+                f'frame_number_to_pts() to get a frame\'s exact PTS, or '
+                f'ticks_per_frame for the exact frame duration.')
+        return ticks_per_frame.numerator
 
     @property
     def framerate(self) -> Union[float, Literal['variable']]:
@@ -558,10 +971,7 @@ class VideoStreamer:
         if hasattr(frame_number, '__iter__'):
             return [self.frame_number_to_pts(n) for n in frame_number]
         frame_number = self._normalize_frame_number(frame_number)
-        if self._framerate == 'variable':
-            return self.frames_pts[frame_number]
-        else:
-            return int(frame_number) * self.pts_delta + self.pts0
+        return int(self.frames_pts[frame_number])
 
     def frame_number_to_time(self, frame_number: int) -> float:
         if hasattr(frame_number, '__iter__'):
@@ -571,20 +981,20 @@ class VideoStreamer:
     def pts_to_frame_number(self, pts: int) -> int:
         if hasattr(pts, '__iter__'):
             return [self.pts_to_frame_number(p) for p in pts]
-        if self._framerate == 'variable':
-            if pts not in self.frames_pts:
-                raise ValueError(f'PTS {pts} not in video index.')
+        first_pts, last_pts = self.frames_pts[0], self.frames_pts[-1]
+        if pts < first_pts:
+            raise ValueError(f'PTS {pts} is before the start of the'
+                             f' video (PTS {first_pts}).')
+        if pts > last_pts:
+            raise ValueError(f'PTS {pts} is after the end of the'
+                             f' video (PTS {last_pts}).')
+        try:
+            # O(1) for a constant-framerate video, O(n_frames) for a
+            # variable-framerate one, whose PTS values are a plain list.
             return self.frames_pts.index(pts)
-        else:
-            if pts < self.pts0:
-                raise ValueError(f'PTS {pts} is before the start of the'
-                                 f' video (PTS {self.pts0}).')
-            if pts > self.pts_delta * (self.n_frames - 1) + self.pts0:
-                raise ValueError(f'PTS {pts} is after the end of the video (PTS '
-                                 f'{self.pts_delta * (self.n_frames - 1) + self.pts0}).')
-            if (pts - self.pts0) % self.pts_delta != 0:
-                raise ValueError(f'PTS {pts} is between frames for this video.')
-            return (pts - self.pts0) // self.pts_delta
+        except ValueError:
+            raise ValueError(f'PTS {pts} is between frames for this'
+                             ' video.') from None
 
     def __getitem__(self, key) -> np.ndarray:
         if np.issubdtype(type(key), np.integer):
@@ -860,12 +1270,12 @@ class _VideoStreamerTimeIndexer:
         # if float arithmetic has nudged the converted value below the
         # stored integer PTS.
         target_pts = time / float(s.time_base) + 0.5
-        if s._framerate == 'variable':
-            # Largest index i with s.frames_pts[i] <= target_pts.
-            frame_number = bisect.bisect_right(s.frames_pts, target_pts) - 1
-        else:
-            offset = target_pts - s.pts0
-            frame_number = math.floor(offset / s.pts_delta)
+        # Largest index i with s.frames_pts[i] <= target_pts. PTS values
+        # increase with frame number whether s.frames_pts is the plain list of
+        # a variable-framerate video or the ConstantFrameratePTS formula of a
+        # constant-framerate one, and bisect only needs indexing and a length,
+        # so the same search works for both.
+        frame_number = bisect.bisect_right(s.frames_pts, target_pts) - 1
         # The bound checks above guarantee frame_number lands in
         # [0, n_frames - 1] under exact arithmetic. Clamp defensively for
         # the float-roundoff edge at exactly time == end_of_playback - eps.

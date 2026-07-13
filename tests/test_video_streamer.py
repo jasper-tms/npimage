@@ -3,14 +3,17 @@ Tests for VideoStreamer, particularly handling of HEVC videos with
 negative-PTS priming packets (common in iPhone recordings).
 """
 
+import json
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 import npimage
-from npimage.vidio import _parse_cache_size
+from npimage.vidio import (ConstantFrameratePTS, _detect_constant_framerate,
+                           _parse_cache_size, _round_half_away_from_zero)
 
 TESTS_DIR = Path(__file__).parent
 SPINNING_MP4 = TESTS_DIR / 'table-tennis-emoji-spinning.mp4'
@@ -504,4 +507,288 @@ def test_cache_hit_serves_without_redecoding():
         assert np.array_equal(frame5, reference[5])
     finally:
         reference.close()
+        vid.close()
+
+
+# ----------------------------------------------------------------------------
+# Constant framerate detection with a time base that can't represent the
+# framerate exactly (every webm, whose time_base is 1/1000)
+# ----------------------------------------------------------------------------
+
+def make_webm(path, framerate, duration=2, extra_arguments=None):
+    """
+    Write a small webm at a given framerate and return its path.
+
+    webm/Matroska always uses a time_base of 1/1000, so at most framerates a
+    frame does not last a whole number of ticks and the stored PTS values come
+    out unevenly spaced even though the video is constant framerate.
+    """
+    command = ['ffmpeg', '-y',
+               '-f', 'lavfi',
+               '-i', f'testsrc=size=64x48:rate={framerate}',
+               '-t', str(duration)]
+    command += extra_arguments or []
+    command += ['-c:v', 'libvpx', '-b:v', '100k',
+                '-cpu-used', '8', '-deadline', 'realtime',
+                str(path)]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, f'ffmpeg failed: {result.stderr}'
+    return path
+
+
+def demuxed_pts(path):
+    """The PTS values stored in a video file, read straight out of it."""
+    import av
+
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        return sorted(packet.pts for packet in container.demux(stream)
+                      if packet.pts is not None)
+
+
+def test_round_half_away_from_zero():
+    """
+    We must round the way ffmpeg does (AV_ROUND_NEAR_INF), not the way python's
+    round() does (half to even), or we fail to reproduce the PTS of any video
+    whose frames land exactly halfway between two ticks.
+    """
+    assert _round_half_away_from_zero(Fraction(125, 2)) == 63  # round() gives 62
+    assert _round_half_away_from_zero(Fraction(375, 2)) == 188
+    assert _round_half_away_from_zero(Fraction(1, 2)) == 1  # round() gives 0
+    assert _round_half_away_from_zero(Fraction(-1, 2)) == -1
+    assert _round_half_away_from_zero(Fraction(100, 3)) == 33
+    assert _round_half_away_from_zero(Fraction(200, 3)) == 67
+    assert _round_half_away_from_zero(Fraction(62)) == 62
+
+
+def test_constant_framerate_pts_models_webm_style_rounding():
+    """
+    30 fps in a 1/1000 time base: frames last 100/3 ticks, so the stored PTS
+    are the ideal times rounded to whole ticks and the gaps between them
+    alternate between 33 and 34.
+    """
+    pts = ConstantFrameratePTS(pts0=0, framerate=30,
+                               time_base=Fraction(1, 1000), n_frames=9)
+    assert list(pts) == [0, 33, 67, 100, 133, 167, 200, 233, 267]
+    assert sorted(set(np.diff(list(pts)))) == [33, 34]
+    assert len(pts) == 9
+    assert pts[0] == 0 and pts[4] == 133
+    assert pts[-1] == 267  # negative indices count back from the end
+    assert pts[2:5] == [67, 100, 133]
+    with pytest.raises(IndexError):
+        pts[9]
+
+
+def test_constant_framerate_pts_is_exact_for_evenly_spaced_video():
+    """
+    A time base that divides evenly by the framerate (typical of mp4) makes the
+    rounding a no-op, so the same formula still describes it.
+    """
+    pts = ConstantFrameratePTS(pts0=1024, framerate=30,
+                               time_base=Fraction(1, 15360), n_frames=5)
+    assert list(pts) == [1024, 1536, 2048, 2560, 3072]  # 512 ticks per frame
+    assert pts.ticks_per_frame == 512
+
+
+def test_constant_framerate_pts_index_is_exact():
+    """PTS -> frame number must invert the rounded formula exactly."""
+    pts = ConstantFrameratePTS(pts0=0, framerate=30,
+                               time_base=Fraction(1, 1000), n_frames=300)
+    for frame_number, value in enumerate(pts):
+        assert pts.index(value) == frame_number
+        assert value in pts
+    # A PTS that falls between two frames belongs to no frame.
+    assert 34 not in pts
+    with pytest.raises(ValueError):
+        pts.index(34)
+
+
+def test_detect_constant_framerate_accepts_quantized_grid():
+    """The rounded 30 fps grid is recognized as constant framerate."""
+    frames_pts = [0, 33, 67, 100, 133, 167, 200, 233, 267, 300]
+    detected = _detect_constant_framerate(frames_pts, Fraction(1, 1000))
+    assert detected is not None
+    assert detected.framerate == 30
+    assert list(detected) == frames_pts
+
+
+def test_detect_constant_framerate_rejects_genuinely_variable():
+    """Timestamps that no single framerate reproduces stay variable."""
+    frames_pts = [0, 33, 100, 133, 233, 267]  # frames dropped partway through
+    assert _detect_constant_framerate(frames_pts, Fraction(1, 1000)) is None
+
+
+def test_detect_constant_framerate_rejects_wrong_declared_framerate():
+    """
+    A framerate the container claims but does not honor is rejected: the
+    declared rate is only ever a candidate, and it has to reproduce every
+    timestamp to be accepted.
+    """
+    frames_pts = [0, 33, 100, 133, 233, 267]
+    assert _detect_constant_framerate(frames_pts, Fraction(1, 1000),
+                                      declared_framerate=30) is None
+
+
+def test_detect_constant_framerate_without_declared_framerate():
+    """The framerate is recovered from the timestamps alone."""
+    frames_pts = list(ConstantFrameratePTS(0, Fraction(30000, 1001),
+                                           Fraction(1, 1000), 200))
+    detected = _detect_constant_framerate(frames_pts, Fraction(1, 1000),
+                                          declared_framerate=None)
+    assert detected is not None
+    assert detected.framerate == Fraction(30000, 1001)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('framerate', [30, 16, 24, 60])
+def test_webm_is_constant_framerate(tmp_path, framerate):
+    """
+    A webm at a framerate its 1/1000 time base cannot represent exactly is
+    still reported as constant framerate, and the formula we store reproduces
+    every timestamp in the file bit for bit.
+
+    16 fps is the interesting case: its frames last exactly 62.5 ticks, so
+    every other frame lands on an exact half tick and only ffmpeg's rounding
+    convention reproduces it.
+    """
+    path = make_webm(tmp_path / f'{framerate}fps.webm', framerate)
+    vid = npimage.VideoStreamer(str(path), cache_index=False)
+    try:
+        assert vid.framerate == float(framerate)
+        assert isinstance(vid.frames_pts, ConstantFrameratePTS)
+        expected = demuxed_pts(path)
+        modeled = [vid.frame_number_to_pts(i) for i in range(vid.n_frames)]
+        assert modeled == expected
+        # And every PTS maps back to the frame it came from.
+        assert [vid.pts_to_frame_number(pts) for pts in expected] \
+            == list(range(vid.n_frames))
+    finally:
+        vid.close()
+
+
+def test_pts_delta_is_an_int_for_evenly_spaced_video(spinning_streamer):
+    """
+    A video whose frames last a whole number of ticks keeps the plain integer
+    pts_delta that callers may already be relying on.
+    """
+    vid = spinning_streamer
+    assert isinstance(vid.pts_delta, int)
+    assert vid.ticks_per_frame == vid.pts_delta
+    assert vid.frame_number_to_pts(3) == vid.pts0 + 3 * vid.pts_delta
+
+
+@pytest.mark.slow
+def test_pts_delta_refuses_to_exist_for_unevenly_spaced_video(tmp_path):
+    """
+    A 30 fps webm's frames last 100/3 ticks, so its PTS are not evenly spaced
+    and no integer pts_delta is correct. Returning one anyway would invite
+    callers to compute timestamps as pts0 + i * pts_delta, which would drift
+    (0, 33, 66, 99, ... instead of 0, 33, 67, 100, ...), so we raise instead.
+    """
+    path = make_webm(tmp_path / 'delta.webm', 30, duration=2)
+    vid = npimage.VideoStreamer(str(path), cache_index=False)
+    try:
+        assert vid.ticks_per_frame == Fraction(100, 3)
+        with pytest.raises(AttributeError, match='not a whole number'):
+            vid.pts_delta
+        # The exact route is always available, and it does not drift.
+        assert [vid.frame_number_to_pts(i) for i in range(4)] == [0, 33, 67, 100]
+    finally:
+        vid.close()
+
+
+@pytest.mark.slow
+def test_webm_random_access_returns_correct_frames(tmp_path):
+    """
+    The frames handed back by random access on a webm are the same pixels a
+    plain sequential decode produces. This is what the PTS bookkeeping is for:
+    if the modeled PTS were off by even one tick, seeking would land on the
+    wrong frame.
+    """
+    import av
+
+    path = make_webm(tmp_path / 'access.webm', 30, duration=4)
+    ground_truth = []
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        for frame in container.decode(stream):
+            ground_truth.append(frame.to_ndarray(format='rgb24'))
+
+    # Caching off, and a jumbled access order, so that every read really goes
+    # through the seek-and-decode-forward path.
+    vid = npimage.VideoStreamer(str(path), cache_index=False, cache_size=None)
+    try:
+        assert vid.n_frames == len(ground_truth)
+        frame_numbers = list(range(vid.n_frames))
+        np.random.default_rng(0).shuffle(frame_numbers)
+        for frame_number in frame_numbers:
+            assert np.array_equal(vid[frame_number], ground_truth[frame_number]), \
+                f'Frame {frame_number} did not match a sequential decode'
+    finally:
+        vid.close()
+
+
+@pytest.mark.slow
+def test_webm_with_dropped_frames_is_variable_framerate(tmp_path):
+    """A webm whose frames really are unevenly spaced stays variable."""
+    path = make_webm(tmp_path / 'variable.webm', 30, duration=4,
+                     extra_arguments=['-vf', "select='not(mod(n,3))+not(mod(n,7))'",
+                                      '-vsync', 'vfr'])
+    vid = npimage.VideoStreamer(str(path), cache_index=False)
+    try:
+        assert vid.framerate == 'variable'
+        assert isinstance(vid.frames_pts, list)
+        assert [vid.frame_number_to_pts(i) for i in range(vid.n_frames)] \
+            == demuxed_pts(path)
+    finally:
+        vid.close()
+
+
+@pytest.mark.slow
+def test_webm_index_round_trips_through_cache_file(tmp_path):
+    """
+    The cached .index stores the framerate formula rather than one timestamp
+    per frame, and reloading it rebuilds the identical PTS values.
+    """
+    path = make_webm(tmp_path / 'cached.webm', 30, duration=4)
+    vid = npimage.VideoStreamer(str(path), cache_index=True)
+    expected_pts = list(vid.frames_pts)
+    vid.close()
+
+    index_file = Path(str(path) + '.index')
+    assert index_file.exists()
+    index = json.loads(index_file.read_text())
+    assert index['framerate'] == 30
+    assert 'frames_pts' not in index  # the whole point: no per-frame timestamps
+
+    reloaded = npimage.VideoStreamer(str(path), cache_index=True)
+    try:
+        assert isinstance(reloaded.frames_pts, ConstantFrameratePTS)
+        assert list(reloaded.frames_pts) == expected_pts
+        assert reloaded.framerate == 30.0
+    finally:
+        reloaded.close()
+
+
+@pytest.mark.slow
+def test_stale_index_file_is_rebuilt(tmp_path):
+    """
+    An index written by an older npimage (which would have called this webm
+    variable framerate) is discarded and rebuilt rather than trusted.
+    """
+    path = make_webm(tmp_path / 'stale.webm', 30, duration=2)
+    index_file = Path(str(path) + '.index')
+    index_file.write_text(json.dumps({
+        'framerate': 'variable',
+        'n_frames': 3,
+        'frames_pts': [0, 33, 67],
+        'rotation': None,
+        'time_base': {'numerator': 1, 'denominator': 1000},
+    }))
+
+    vid = npimage.VideoStreamer(str(path), cache_index=True)
+    try:
+        assert vid.n_frames == len(demuxed_pts(path)) != 3
+        assert vid.framerate == 30.0
+    finally:
         vid.close()
