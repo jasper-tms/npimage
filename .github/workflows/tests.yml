@@ -29,8 +29,8 @@ jobs:
       - name: Install package with dev dependencies
         run: pip install -e ".[all,dev]"
 
-      - name: Run fast unit tests
-        run: pytest -m "not slow" --cov=npimage --cov-report=term-missing --cov-report=xml -v
+      - name: Run tests
+        run: pytest --cov=npimage --cov-report=term-missing --cov-report=xml -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
