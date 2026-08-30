@@ -1,0 +1,7 @@
+*.c
+*.so
+*.pyd
+build/
+*.egg-info/
+__pychache__/
+.DS_Store
