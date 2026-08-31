@@ -1351,10 +1351,38 @@ class AVVideoWriter:
         self._closed = False
         self.stream.width = 0
         self.stream.height = 0
+        # np.pad spec that evens out odd frame dimensions for yuv420p; computed
+        # from the first frame (see _pad_to_even) and reused for the rest.
+        self._pad = None
 
     @property
     def framerate(self):
         return float(self._framerate)
+
+    def _pad_to_even(self, frame):
+        """
+        Duplicate the bottom row and/or right column of an ndarray frame so its
+        height and width are both even, as the yuv420p pixel format requires
+        (an odd dimension otherwise fails to encode). The pad is worked out from
+        the first frame and cached, so the info message prints only once.
+        """
+        if self.stream.pix_fmt != 'yuv420p':
+            return frame
+        if self._pad is None:
+            height, width = frame.shape[:2]
+            pad = [[0, 0] for _ in range(frame.ndim)]
+            if height % 2 != 0:
+                print('INFO: Height must be even for yuv420p pixel format but image'
+                      f' has height {height}, so the bottom row will be duplicated.')
+                pad[0][1] = 1
+            if width % 2 != 0:
+                print('INFO: Width must be even for yuv420p pixel format but image'
+                      f' has width {width}, so the right column will be duplicated.')
+                pad[1][1] = 1
+            self._pad = pad
+        if any(after for _, after in self._pad):
+            return np.pad(frame, self._pad, mode='edge')
+        return frame
 
     def write(self, frame):
         if self._closed:
@@ -1366,7 +1394,8 @@ class AVVideoWriter:
                 for i in range(frame.shape[0]):
                     self.write(frame[i])
                 return
-            elif frame.ndim == 3 and frame.shape[-1] == 3:
+            frame = self._pad_to_even(frame)
+            if frame.ndim == 3 and frame.shape[-1] == 3:
                 frame = self.av.VideoFrame.from_ndarray(frame, format='rgb24')
             elif frame.ndim == 3 and frame.shape[-1] == 4:
                 # While some video codecs support an alpha channel, most don't,

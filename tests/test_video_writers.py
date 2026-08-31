@@ -35,3 +35,26 @@ def test_video_writer_roundtrip(writer_class, table_tennis_emoji, tmp_path):
     vid = npimage.VideoStreamer(str(output))
     assert vid.n_frames == len(frames)
     assert vid[0].shape[:2] == table_tennis_emoji.shape[:2]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('writer_class', [FFmpegVideoWriter, AVVideoWriter])
+@pytest.mark.parametrize('height, width', [(101, 100), (100, 101), (101, 101)])
+def test_writer_pads_odd_dimensions_to_even(writer_class, height, width, tmp_path):
+    """The yuv420p pixel format needs even dimensions, so a frame with an odd
+    height and/or width is padded up by one (duplicating the edge) rather than
+    failing to encode. Both writers do this."""
+    rng = np.random.default_rng(0)
+    frames = rng.integers(0, 256, size=(8, height, width, 3), dtype=np.uint8)
+    output = tmp_path / f'{writer_class.__name__}_{height}x{width}.mp4'
+
+    with writer_class(str(output), framerate=30, overwrite=True) as writer:
+        for frame in frames:
+            writer.write(frame)
+
+    assert output.exists() and output.stat().st_size > 0
+    vid = npimage.VideoStreamer(str(output))
+    assert vid.n_frames == len(frames)
+    out_height, out_width = vid[0].shape[:2]
+    assert out_height == height + (height % 2)
+    assert out_width == width + (width % 2)
