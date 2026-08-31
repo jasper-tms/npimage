@@ -1,5 +1,6 @@
 """Tests for HEIC read/write support."""
 
+import importlib.util
 import subprocess
 import sys
 import textwrap
@@ -29,14 +30,21 @@ def test_heic_load_save_roundtrip(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='guard only fires on macOS')
-def test_heic_guards_against_pyav_already_imported(tmp_path):
+@pytest.mark.parametrize('module, display_name', [('av', 'PyAV'),
+                                                  ('cv2', 'OpenCV')])
+def test_heic_guards_against_ffmpeg_lib_already_imported(tmp_path, module,
+                                                         display_name):
     """
-    On macOS, importing PyAV before libheif causes a segfault inside
-    pillow_heif. npimage guards against this by raising a RuntimeError with a
-    clear message instead of letting the segfault happen.
+    On macOS, importing a library that loads ffmpeg's native libraries (PyAV or
+    OpenCV) before libheif causes a segfault inside pillow_heif. npimage guards
+    against this by raising a RuntimeError with a clear message instead of
+    letting the segfault happen. Run in a subprocess so a regression segfaults
+    the child, not the test session.
     """
+    if importlib.util.find_spec(module) is None:
+        pytest.skip(f'{module} is not installed')
     script = textwrap.dedent(f"""
-        import av  # noqa: F401
+        import {module}  # noqa: F401
         import numpy as np
         import npimage
         data = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -55,4 +63,4 @@ def test_heic_guards_against_pyav_already_imported(tmp_path):
         f'stderr={result.stderr!r}'
     )
     assert 'GUARD_FIRED:' in result.stdout
-    assert 'PyAV' in result.stdout
+    assert display_name in result.stdout

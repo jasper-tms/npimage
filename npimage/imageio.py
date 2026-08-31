@@ -456,32 +456,41 @@ def _ensure_heif_opener_registered() -> None:
     """Register the HEIF opener if not already registered."""
     global _heif_opener_registered
     if not _heif_opener_registered:
-        _check_pyav_not_loaded_before_heif()
+        _check_ffmpeg_libs_not_loaded_before_heif()
         from pillow_heif import register_heif_opener
         register_heif_opener()
         _heif_opener_registered = True
 
 
-def _check_pyav_not_loaded_before_heif() -> None:
-    """Raise a clear error if PyAV has been imported before HEIF.
+def _check_ffmpeg_libs_not_loaded_before_heif() -> None:
+    """Raise a clear error if a library that loads ffmpeg's native libraries
+    has been imported before HEIF.
 
-    On macOS, loading PyAV's bundled native libraries before libheif causes a
-    segfault inside pillow_heif when it first initializes. Loading libheif
-    first (or not loading PyAV at all) avoids the crash. Once libheif is
-    loaded, further HEIF operations and PyAV use coexist fine in the same
-    process.
+    On macOS, loading ffmpeg's bundled libav* native libraries before libheif
+    causes a segfault inside pillow_heif when it first initializes. Both PyAV
+    (`av`) and OpenCV (`cv2`) load those libraries, so importing either before
+    libheif triggers the crash. Loading libheif first (or not loading them at
+    all) avoids it. Once libheif is loaded, further HEIF operations and PyAV or
+    OpenCV use coexist fine in the same process.
     """
     import sys
-    if sys.platform != 'darwin' or 'av' not in sys.modules:
+    if sys.platform != 'darwin':
+        return
+    display_names = {'av': 'PyAV (`av`)', 'cv2': 'OpenCV (`cv2`)'}
+    loaded = [display_names[name] for name in ('av', 'cv2')
+              if name in sys.modules]
+    if not loaded:
         return
     raise RuntimeError(
-        'Cannot open a HEIC file: PyAV (`av`) has already been imported in '
-        'this process, which on macOS causes pillow_heif to segfault when it '
-        'first loads libheif.\n\n'
+        f'Cannot open a HEIC file: this process already imported '
+        f'{" and ".join(loaded)}, which on macOS causes pillow_heif to '
+        'segfault when it first loads libheif.\n\n'
         'Workarounds:\n'
         '  1. Open/save your HEIC files before any code path that imports '
-        '`av` runs (e.g. before using npimage.VideoStreamer, AVVideoWriter, '
-        'or any other code that uses PyAV).\n'
-        '  2. Do HEIC I/O in a separate Python process from your video I/O.\n'
+        '`av` or `cv2` runs (e.g. before using npimage.VideoStreamer, '
+        'AVVideoWriter, find_landmark, series_to_target, or other PyAV/OpenCV '
+        'code).\n'
+        '  2. Do HEIC I/O in a separate Python process from your video/OpenCV '
+        'work.\n'
         '  3. Use a different image format (PNG, JPEG, TIFF).'
     )
