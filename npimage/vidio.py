@@ -8,6 +8,7 @@ Function list:
 - save_video(data, filename) -> None
     Saves a numpy array of pixel values as a video file.
     Arguments for setting framerate, video bitrate, etc are provided.
+    With filename=None, returns the encoded video as bytes instead.
 
 Class list:
 - VideoStreamer: Provides fast random access to frames in a video file
@@ -19,6 +20,7 @@ Class list:
 - VideoWriter: Allows writing frames one-by-one to a video file via
     VideoWriter.write(image). This can be advantageous compared to save_video
     because you don't ever have to have all the frames in memory at once.
+    With filename=None, close() returns the encoded video as bytes instead.
 """
 
 from typing import Union, Tuple, Iterator, Literal, Optional
@@ -26,6 +28,9 @@ from pathlib import Path
 from collections import OrderedDict
 import subprocess
 import shutil
+import tempfile
+import io
+import os
 import sys
 import threading
 import json
@@ -65,6 +70,16 @@ extension_default_codecs = {
 }
 
 supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'gif']
+
+# Container formats the video writers can encode to bytes (filename=None).
+# Values are the matching FFmpeg/PyAV muxer names.
+bytes_formats = {
+    'mp4': 'mp4',
+    'mkv': 'matroska',
+    'avi': 'avi',
+    'mov': 'mov',
+    'webm': 'webm',
+}
 
 # Time base for AVVideoWriter frames written with explicit timestamps.
 # 90000 is evenly divisible by common frame rates (24, 25, 30, 30000/1001, 60).
@@ -1303,10 +1318,17 @@ class AVVideoWriter:
     ever needing to store all the frames in memory at once. If you have all
     your frames in memory already, you could use save_video(data, filename)
 
+    To get the encoded video as bytes instead of writing a file, pass
+    filename=None and take the return value of close():
+    >>> writer = VideoWriter(None, format='mp4')
+    >>> writer.write(frames)
+    >>> video_bytes = writer.close()
+
     Parameters
     ----------
-    filename : str
-        The filename to save the video to.
+    filename : str or None
+        The filename to save the video to. If None, the video is encoded to
+        bytes, which close() returns and which are also kept on `self.bytes`.
     framerate : int or float, default 30
         The frame rate of the video. Ignored if frames are written with
         `time` (see write()).
@@ -1319,20 +1341,40 @@ class AVVideoWriter:
         The video codec to use for encoding. If None, automatically chosen based
         on the file extension (e.g. libx264 for .mp4, libvpx-vp9 for .webm).
         Accepts aliases like h264, h265, vp8, vp9, etc.
+    overwrite : bool, default False
+        Whether to overwrite the file if it already exists.
+    format : 'mp4', 'mkv', 'avi', 'mov', 'webm', or None, default None
+        The container format to encode to when filename=None. Defaults to
+        'mp4' in that case. Must be None when a filename is given, since the
+        file extension sets the format.
     """
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
                  codec: Literal['libx264', 'libx265', 'libvpx', 'libvpx-vp9', None] = None,
-                 overwrite=False):
+                 overwrite=False,
+                 format: Literal['mp4', 'mkv', 'avi', 'mov', 'webm', None] = None):
         self.av = _import_av()
-        filename = Path(filename).expanduser()
-        extension = filename.suffix.lower().lstrip('.')
-        if extension == 'gif':
-            raise NotImplementedError('Saving to GIF format not yet implemented. '
-                                      'Use save_video() instead.')
-        if filename.exists() and not overwrite:
-            raise FileExistsError(f'File {filename} already exists. '
-                                  'Set overwrite=True to overwrite.')
+        if filename is None:
+            if format is None:
+                format = 'mp4'
+            if format not in bytes_formats:
+                raise ValueError(f'format must be one of {list(bytes_formats)}'
+                                 f' but was {format!r}')
+            extension = format
+        else:
+            if format is not None:
+                raise ValueError('format is only used when filename=None. When'
+                                 ' saving to a file, its extension sets the format.')
+            filename = Path(filename).expanduser()
+            extension = filename.suffix.lower().lstrip('.')
+            if extension == 'gif':
+                raise NotImplementedError('Saving to GIF format not yet implemented. '
+                                          'Use save_video() instead.')
+            if filename.exists() and not overwrite:
+                raise FileExistsError(f'File {filename} already exists. '
+                                      'Set overwrite=True to overwrite.')
         self.filename = filename
+        # The encoded video, set by close() when filename is None
+        self.bytes = None
         if not np.issubdtype(type(framerate), np.number):
             raise TypeError('framerate must be a number but got'
                             f' type {type(framerate)} instead')
@@ -1341,12 +1383,17 @@ class AVVideoWriter:
         self.compression_speed = compression_speed
 
         if codec is None:
-            ext = filename.suffix.lower().lstrip('.')
-            self.codec = extension_default_codecs.get(ext, 'libx264')
+            self.codec = extension_default_codecs.get(extension, 'libx264')
         else:
             self.codec = codec_aliases[codec.lower()]
 
-        self.container = self.av.open(filename, mode='w')
+        if filename is None:
+            self._buffer = io.BytesIO()
+            self.container = self.av.open(self._buffer, mode='w',
+                                          format=bytes_formats[extension])
+        else:
+            self._buffer = None
+            self.container = self.av.open(filename, mode='w')
         self.stream = self.container.add_stream(self.codec, rate=self._framerate)
         self.stream.pix_fmt = 'yuv420p'
         if self.codec in ('libvpx', 'libvpx-vp9'):
@@ -1462,7 +1509,13 @@ class AVVideoWriter:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def close(self):
+    def close(self) -> Optional[bytes]:
+        """
+        Finish encoding and close the video. Returns the encoded video as
+        bytes if filename was None, otherwise None.
+        """
+        if self._closed:
+            return self.bytes
         # Flush stream
         for packet in self.stream.encode():
             self.container.mux(packet)
@@ -1471,9 +1524,13 @@ class AVVideoWriter:
         self.stream = None
         self.container.close()
         self.container = None
+        if self._buffer is not None:
+            self.bytes = self._buffer.getvalue()
+            self._buffer = None
         self._closed = True
         import gc
         gc.collect()
+        return self.bytes
 
 
 class FFmpegVideoWriter:
@@ -1490,10 +1547,17 @@ class FFmpegVideoWriter:
     ever needing to store all the frames in memory at once. If you have all
     your frames in memory already, you could use save_video(data, filename)
 
+    To get the encoded video as bytes instead of writing a file, pass
+    filename=None and take the return value of close():
+    >>> writer = VideoWriter(None, format='mp4')
+    >>> writer.write(frames)
+    >>> video_bytes = writer.close()
+
     Parameters
     ----------
-    filename : str
-        The filename to save the video to.
+    filename : str or None
+        The filename to save the video to. If None, the video is encoded to
+        bytes, which close() returns and which are also kept on `self.bytes`.
     framerate : int or float, default 30
         The frame rate of the video.
     crf : int, default 23
@@ -1507,15 +1571,34 @@ class FFmpegVideoWriter:
         Accepts aliases like h264, h265, vp8, vp9, etc.
     overwrite : bool, default False
         Whether to overwrite the file if it already exists.
+    format : 'mp4', 'mkv', 'avi', 'mov', 'webm', or None, default None
+        The container format to encode to when filename=None. Defaults to
+        'mp4' in that case. Must be None when a filename is given, since the
+        file extension sets the format.
     """
     def __init__(self, filename, framerate=30, crf=23, compression_speed='medium',
                  codec: Literal['libx264', 'libx265', 'libvpx', 'libvpx-vp9', None] = None,
-                 overwrite=False):
-        filename = Path(filename).expanduser()
-        if filename.exists() and not overwrite:
-            raise FileExistsError(f'File {filename} already exists. '
-                                  'Set overwrite=True to overwrite.')
+                 overwrite=False,
+                 format: Literal['mp4', 'mkv', 'avi', 'mov', 'webm', None] = None):
+        if filename is None:
+            if format is None:
+                format = 'mp4'
+            if format not in bytes_formats:
+                raise ValueError(f'format must be one of {list(bytes_formats)}'
+                                 f' but was {format!r}')
+            extension = format
+        else:
+            if format is not None:
+                raise ValueError('format is only used when filename=None. When'
+                                 ' saving to a file, its extension sets the format.')
+            filename = Path(filename).expanduser()
+            extension = filename.suffix.lower().lstrip('.')
+            if filename.exists() and not overwrite:
+                raise FileExistsError(f'File {filename} already exists. '
+                                      'Set overwrite=True to overwrite.')
         self.filename = filename
+        # The encoded video, set by close() when filename is None
+        self.bytes = None
         if not np.issubdtype(type(framerate), np.number):
             raise TypeError('framerate must be a number but got'
                             f' type {type(framerate)} instead')
@@ -1524,10 +1607,14 @@ class FFmpegVideoWriter:
         self.compression_speed = compression_speed
 
         if codec is None:
-            ext = filename.suffix.lower().lstrip('.')
-            self.codec = extension_default_codecs.get(ext, 'libx264')
+            self.codec = extension_default_codecs.get(extension, 'libx264')
         else:
             self.codec = codec_aliases[codec.lower()]
+        self._extension = extension
+        # When encoding to bytes, ffmpeg writes to this temporary file, which
+        # close() reads back and deletes. A pipe to stdout would avoid touching
+        # disk, but mp4 can't be written to a pipe without fragmenting it.
+        self._temporary_path = None
 
         # Initialize process state
         self._process = None
@@ -1591,7 +1678,14 @@ class FFmpegVideoWriter:
             command += ['-b:v', '0']
         else:
             command += ['-preset', self.compression_speed]
-        command.append(str(self.filename))
+        if self.filename is None:
+            file_descriptor, temporary_path = tempfile.mkstemp(
+                suffix='.' + self._extension)
+            os.close(file_descriptor)
+            self._temporary_path = Path(temporary_path)
+            command.append(str(self._temporary_path))
+        else:
+            command.append(str(self.filename))
 
         # Start FFmpeg process
         _check_ffmpeg_available('ffmpeg')
@@ -1664,10 +1758,13 @@ class FFmpegVideoWriter:
         frame_bytes = frame.tobytes()
         self._stdin.write(frame_bytes)
 
-    def close(self):
-        """Close the video writer and finalize the video file"""
+    def close(self) -> Optional[bytes]:
+        """
+        Finish encoding and close the video. Returns the encoded video as
+        bytes if filename was None, otherwise None.
+        """
         if self._closed:
-            return
+            return self.bytes
 
         try:
             # Close stdin to signal end of input
@@ -1685,12 +1782,22 @@ class FFmpegVideoWriter:
                 if return_code != 0:
                     raise RuntimeError(f'FFmpeg failed with return code {return_code}:'
                                        f' {stderr_data.decode()}')
+            if self.filename is None:
+                if self._temporary_path is None:
+                    # No frames were written, so ffmpeg never ran
+                    self.bytes = b''
+                else:
+                    self.bytes = self._temporary_path.read_bytes()
         finally:
             # Clean up process references
             self._process = None
             self._stdin = None
             self._stderr_thread = None
+            if self._temporary_path is not None:
+                self._temporary_path.unlink(missing_ok=True)
+                self._temporary_path = None
             self._closed = True
+        return self.bytes
 
     def __enter__(self):
         return self
@@ -1702,13 +1809,17 @@ class FFmpegVideoWriter:
 VideoWriter = FFmpegVideoWriter
 
 
-def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
+def save_video(data, filename=None, time_axis=0, color_axis=None, overwrite=False,
                dim_order='yx', framerate=30, crf=23, compression_speed='medium',
                progress_bar=True, codec: Literal['libx264', 'libx265', 'libvpx',
-                                                 'libvpx-vp9', None] = None
-               ) -> None:
+                                                 'libvpx-vp9', None] = None,
+               format: Literal['mp4', 'mkv', 'avi', 'mov', 'webm', 'gif', None] = None
+               ) -> Optional[bytes]:
     """
     Save a 3D numpy array of greyscale values OR a 4D numpy array of RGB values as a video
+
+    With filename=None, the video is not saved to a file and is instead
+    returned as bytes, e.g. `video_bytes = save_video(data, format='webm')`.
 
     Follows the PyAV cookbook section on generating video from numpy arrays:
     https://pyav.basswood-io.com/docs/develop/cookbook/numpy.html#generating-video
@@ -1718,8 +1829,9 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
     data : numpy.ndarray or list of images
         A 3D (grayscale) or 4D (RGB) numpy array of pixel values.
 
-    filename : str
-        The filename to save the video to.
+    filename : str or None, default None
+        The filename to save the video to. If None, the encoded video is
+        returned as bytes instead.
 
     time_axis : int, default 0
         The axis of the data array that will be played as time in the video.
@@ -1757,15 +1869,37 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         The video codec to use for encoding. If None, automatically chosen based
         on the file extension (e.g. libx264 for .mp4, libvpx-vp9 for .webm).
         Accepts aliases like h264, h265, vp8, vp9, etc.
+
+    format : 'mp4', 'mkv', 'avi', 'mov', 'webm', 'gif', or None, default None
+        The container format to encode to when filename=None. Defaults to
+        'mp4' in that case. Must be None when a filename is given, since the
+        file extension sets the format.
+
+    Returns
+    -------
+    bytes or None
+        The encoded video if filename is None, otherwise None.
     """
 
-    filename = str(filename)
-    if filename.split('.')[-1].lower() not in supported_extensions:
-        filename += '.mp4'
-    filename = Path(filename).expanduser()
-    if filename.exists() and not overwrite:
-        raise FileExistsError(f'File {filename} already exists. '
-                              'Set overwrite=True to overwrite.')
+    if filename is None:
+        if format is None:
+            format = 'mp4'
+        if format not in supported_extensions:
+            raise ValueError(f'format must be one of {supported_extensions}'
+                             f' but was {format!r}')
+        extension = format
+    else:
+        if format is not None:
+            raise ValueError('format is only used when filename=None. When'
+                             ' saving to a file, its extension sets the format.')
+        filename = str(filename)
+        if filename.split('.')[-1].lower() not in supported_extensions:
+            filename += '.mp4'
+        filename = Path(filename).expanduser()
+        if filename.exists() and not overwrite:
+            raise FileExistsError(f'File {filename} already exists. '
+                                  'Set overwrite=True to overwrite.')
+        extension = filename.suffix.lower().lstrip('.')
 
     if not isinstance(data, np.ndarray):
         data = np.array(data)
@@ -1801,8 +1935,6 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
         n_frames = data.shape[0]
         height, width = data.shape[1:]
 
-    extension = filename.suffix.lower().lstrip('.')
-
     if extension == 'gif':
         # We make gifs with PIL instead of using FFmpeg
         from PIL import Image
@@ -1829,17 +1961,20 @@ def save_video(data, filename, time_axis=0, color_axis=None, overwrite=False,
                 durations_ms.append(lo * 10)
                 accumulated -= lo
 
-        pil_images[0].save(filename, format='GIF', save_all=True,
+        output = io.BytesIO() if filename is None else filename
+        pil_images[0].save(output, format='GIF', save_all=True,
                            append_images=pil_images[1:],
                            duration=durations_ms, loop=0)
-        return
+        return output.getvalue() if filename is None else None
 
     with VideoWriter(filename, framerate=framerate, crf=crf,
                      compression_speed=compression_speed, codec=codec,
-                     overwrite=overwrite) as writer:
+                     overwrite=overwrite,
+                     format=extension if filename is None else None) as writer:
         for frame_i in tqdm(range(n_frames), total=n_frames,
                             desc='Saving video', disable=not progress_bar):
             writer.write(data[frame_i])
+    return writer.bytes
 
 
 def _get_rotation_from_metadata(filename):

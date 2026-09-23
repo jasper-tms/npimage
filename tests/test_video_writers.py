@@ -95,3 +95,75 @@ def test_ffmpeg_writer_refuses_time(tmp_path):
     writer = FFmpegVideoWriter(str(tmp_path / 'constant.mp4'), overwrite=True)
     with pytest.raises(NotImplementedError):
         writer.write(frame, time=0.0)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('writer_class', [FFmpegVideoWriter, AVVideoWriter])
+@pytest.mark.parametrize('format', ['mp4', 'webm', 'mkv'])
+def test_writer_encodes_to_bytes(writer_class, format, tmp_path, monkeypatch):
+    """With filename=None, close() returns the encoded video as bytes, which
+    decode to the frames that were written, and no files are left behind."""
+    # Keep the FFmpegVideoWriter's temporary file where we can check for it
+    temporary_directory = tmp_path / 'temporary'
+    temporary_directory.mkdir()
+    monkeypatch.setattr('tempfile.tempdir', str(temporary_directory))
+    rng = np.random.default_rng(0)
+    frames = rng.integers(0, 256, size=(8, 64, 64, 3), dtype=np.uint8)
+
+    writer = writer_class(None, framerate=30, format=format)
+    writer.write(frames)
+    video_bytes = writer.close()
+
+    assert isinstance(video_bytes, bytes) and len(video_bytes) > 0
+    assert writer.bytes is video_bytes
+    assert writer.close() is video_bytes  # Closing again is harmless
+    assert list(temporary_directory.iterdir()) == []
+
+    output = tmp_path / f'from_bytes.{format}'
+    output.write_bytes(video_bytes)
+    vid = npimage.VideoStreamer(str(output))
+    assert vid.n_frames == len(frames)
+    assert vid[0].shape == (64, 64, 3)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('writer_class', [FFmpegVideoWriter, AVVideoWriter])
+def test_writer_bytes_defaults_to_mp4(writer_class):
+    frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
+    with writer_class(None) as writer:
+        writer.write(frames)
+    # mp4 files have an 'ftyp' box right after the 4-byte box size
+    assert writer.bytes[4:8] == b'ftyp'
+
+
+@pytest.mark.parametrize('writer_class', [FFmpegVideoWriter, AVVideoWriter])
+def test_writer_rejects_bad_format(writer_class, tmp_path):
+    with pytest.raises(ValueError):
+        writer_class(None, format='gif')
+    with pytest.raises(ValueError):
+        writer_class(str(tmp_path / 'video.mp4'), format='webm')
+
+
+def test_ffmpeg_writer_bytes_with_no_frames():
+    assert FFmpegVideoWriter(None).close() == b''
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('format', ['mp4', 'webm', 'gif'])
+def test_save_video_returns_bytes(format, tmp_path):
+    rng = np.random.default_rng(0)
+    frames = rng.integers(0, 256, size=(6, 32, 32, 3), dtype=np.uint8)
+
+    video_bytes = npimage.save_video(frames, format=format, progress_bar=False)
+
+    assert isinstance(video_bytes, bytes) and len(video_bytes) > 0
+    output = tmp_path / f'from_bytes.{format}'
+    output.write_bytes(video_bytes)
+    assert len(npimage.load_video(str(output))) == len(frames)
+
+
+def test_save_video_to_file_returns_none(tmp_path):
+    frames = np.zeros((4, 32, 32, 3), dtype=np.uint8)
+    output = tmp_path / 'video.mp4'
+    assert npimage.save_video(frames, output, progress_bar=False) is None
+    assert output.exists()
