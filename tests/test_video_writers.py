@@ -58,3 +58,40 @@ def test_writer_pads_odd_dimensions_to_even(writer_class, height, width, tmp_pat
     out_height, out_width = vid[0].shape[:2]
     assert out_height == height + (height % 2)
     assert out_width == width + (width % 2)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('extension', ['mp4', 'webm'])
+def test_av_writer_preserves_variable_frame_times(extension, tmp_path):
+    """Frames written with `time` keep those timestamps."""
+    rng = np.random.default_rng(0)
+    times = [0.0, 0.024, 0.055, 0.09, 0.124, 0.131, 0.189, 0.2, 0.25, 0.3]
+    frames = rng.integers(0, 256, size=(len(times), 64, 64, 3), dtype=np.uint8)
+    output = tmp_path / f'variable.{extension}'
+
+    with AVVideoWriter(str(output), overwrite=True) as writer:
+        for frame, time in zip(frames, times):
+            writer.write(frame, time=time)
+
+    vid = npimage.VideoStreamer(str(output))
+    assert vid.n_frames == len(times)
+    read_times = [vid.frame_number_to_time(i) for i in range(vid.n_frames)]
+    np.testing.assert_allclose(read_times, times, atol=0.0005)
+
+
+def test_av_writer_refuses_mixed_or_unordered_times(tmp_path):
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    with AVVideoWriter(str(tmp_path / 'mixed.mp4'), overwrite=True) as writer:
+        writer.write(frame, time=0.0)
+        with pytest.raises(ValueError):
+            writer.write(frame)
+        with pytest.raises(ValueError):
+            writer.write(frame, time=0.0)
+        writer.write(frame, time=0.04)
+
+
+def test_ffmpeg_writer_refuses_time(tmp_path):
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    writer = FFmpegVideoWriter(str(tmp_path / 'constant.mp4'), overwrite=True)
+    with pytest.raises(NotImplementedError):
+        writer.write(frame, time=0.0)

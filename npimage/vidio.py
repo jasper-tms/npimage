@@ -66,6 +66,10 @@ extension_default_codecs = {
 
 supported_extensions = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'gif']
 
+# Time base for AVVideoWriter frames written with explicit timestamps.
+# 90000 is evenly divisible by common frame rates (24, 25, 30, 30000/1001, 60).
+timestamped_time_base = Fraction(1, 90000)
+
 
 def _import_av():
     try:
@@ -1304,7 +1308,8 @@ class AVVideoWriter:
     filename : str
         The filename to save the video to.
     framerate : int or float, default 30
-        The frame rate of the video.
+        The frame rate of the video. Ignored if frames are written with
+        `time` (see write()).
     crf : int, default 23
         Constant Rate Factor for encoding quality (lower is better quality).
     compression_speed : str, default 'medium'
@@ -1354,6 +1359,9 @@ class AVVideoWriter:
         # np.pad spec that evens out odd frame dimensions for yuv420p; computed
         # from the first frame (see _pad_to_even) and reused for the rest.
         self._pad = None
+        # Set by the first write() call.
+        self._timestamped = None
+        self._last_pts = None
 
     @property
     def framerate(self):
@@ -1384,13 +1392,38 @@ class AVVideoWriter:
             return np.pad(frame, self._pad, mode='edge')
         return frame
 
-    def write(self, frame):
+    def write(self, frame, time: Optional[float] = None):
+        """
+        Write a frame to the video file.
+
+        Parameters
+        ----------
+        frame : np.ndarray or av.VideoFrame
+            An image of shape (H, W), (H, W, 3) or (H, W, 4), or a stack of
+            images of shape (t, H, W, 3) or (t, H, W, 4).
+        time : float, optional
+            The frame's timestamp in seconds, for variable-framerate video.
+            Must strictly increase, and be passed on every call or none.
+        """
         if self._closed:
             raise RuntimeError('AVVideoWriter is closed, cannot write more frames.')
+        if self._timestamped is None:
+            self._timestamped = time is not None
+            if self._timestamped:
+                # Must be set before the first frame opens the encoder.
+                self.stream.codec_context.time_base = timestamped_time_base
+                self.stream.time_base = timestamped_time_base
+        elif self._timestamped != (time is not None):
+            raise ValueError('Pass `time` to every write() call or to none of them'
+                             ' (the first write() call '
+                             + ('did' if self._timestamped else 'did not') + ').')
         if not isinstance(frame, self.av.VideoFrame):
             if not isinstance(frame, np.ndarray):
                 frame = np.array(frame)
             if frame.ndim == 4:
+                if time is not None:
+                    raise ValueError('`time` applies to a single frame, so write'
+                                     ' a stack of images one frame at a time.')
                 for i in range(frame.shape[0]):
                     self.write(frame[i])
                 return
@@ -1410,6 +1443,14 @@ class AVVideoWriter:
             self.stream.width = frame.width
         if self.stream.height == 0:
             self.stream.height = frame.height
+        if time is not None:
+            pts = _round_half_away_from_zero(Fraction(time) / timestamped_time_base)
+            if self._last_pts is not None and pts <= self._last_pts:
+                raise ValueError(f'Frame time {time} s is not after the previous'
+                                 " frame's time. Timestamps must strictly increase.")
+            self._last_pts = pts
+            frame.pts = pts
+            frame.time_base = timestamped_time_base
         for packet in self.stream.encode(frame):
             self.container.mux(packet)
             del packet
@@ -1571,8 +1612,12 @@ class FFmpegVideoWriter:
                                                daemon=True)
         self._stderr_thread.start()
 
-    def write(self, frame):
-        """Write a frame to the video file"""
+    def write(self, frame, time: Optional[float] = None):
+        """Write a frame to the video file. `time` is only supported by AVVideoWriter."""
+        if time is not None:
+            raise NotImplementedError('FFmpegVideoWriter writes constant-framerate'
+                                      ' video only. Use AVVideoWriter to write'
+                                      ' frames with explicit timestamps.')
         if self._closed:
             raise RuntimeError('FFmpegVideoWriter is closed, cannot write more frames.')
 
